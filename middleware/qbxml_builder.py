@@ -1,0 +1,151 @@
+"""
+Build qbXML InvoiceAdd requests from FM invoice data.
+
+FM sends a JSON payload with the invoice. This module turns that into
+the qbXML string that QuickBooks Web Connector feeds to QB Desktop.
+
+Expected payload structure (all fields are strings unless noted):
+{
+    "customer_name": "Acme Corp",
+    "order_id": "12345",
+    "order_date": "2026-05-05",       # YYYY-MM-DD
+    "ship_date": "2026-05-10",        # YYYY-MM-DD, optional
+    "cust_po": "PO-9876",             # optional
+    "ship_via": "UPS Ground",         # optional
+    "ship_to_name": "Acme Corp",
+    "ship_to_addr1": "123 Main St",
+    "ship_to_addr2": "",              # optional
+    "ship_to_city": "Minneapolis",
+    "ship_to_state": "MN",
+    "ship_to_zip": "55401",
+    "tax_amount": "45.00",            # pre-calculated by FM/Avalara
+    "freight_amount": "12.50",
+    "amount_paid": "557.50",
+    "payment_method": "Visa",         # optional
+    "salesperson": "Jane Smith",      # optional
+    "memo": "PP Note text",           # optional
+    "line_items": [
+        {
+            "item_name": "PROD-001",
+            "description": "Acoustical panel 2x4",
+            "quantity": "2",
+            "unit_price": "250.00",
+            "exclude": false          # bool — respects AE_Exclude flag
+        }
+    ]
+}
+"""
+
+import xml.etree.ElementTree as ET
+
+
+def build_invoice_add(payload: dict) -> str:
+    """Return a complete qbXML InvoiceAdd request string."""
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "InvoiceAddRq", requestID="1")
+    inv = ET.SubElement(req, "InvoiceAdd")
+
+    _text(inv, "CustomerRef/FullName", payload["customer_name"])
+    _text(inv, "TxnDate", payload["order_date"])
+
+    if payload.get("cust_po"):
+        _text(inv, "RefNumber", payload["cust_po"])
+
+    if payload.get("ship_via"):
+        _text(inv, "ShipMethodRef/FullName", payload["ship_via"])
+
+    if payload.get("ship_date"):
+        _text(inv, "ShipDate", payload["ship_date"])
+
+    if payload.get("salesperson"):
+        _text(inv, "SalesRepRef/FullName", payload["salesperson"])
+
+    _build_ship_to(inv, payload)
+
+    if payload.get("memo"):
+        _text(inv, "Memo", payload["memo"])
+
+    # Line items (skip any marked exclude=True)
+    for item in payload.get("line_items", []):
+        if item.get("exclude"):
+            continue
+        li = ET.SubElement(inv, "InvoiceLineAdd")
+        _text(li, "ItemRef/FullName", item["item_name"])
+        if item.get("description"):
+            _text(li, "Desc", item["description"])
+        _text(li, "Quantity", str(item["quantity"]))
+        _text(li, "Rate", str(item["unit_price"]))
+
+    # Freight as a separate line item (QB Desktop standard approach)
+    if payload.get("freight_amount") and float(payload["freight_amount"]) != 0:
+        freight_li = ET.SubElement(inv, "InvoiceLineAdd")
+        _text(freight_li, "ItemRef/FullName", "Freight")
+        _text(freight_li, "Desc", "Shipping & Handling")
+        _text(freight_li, "Quantity", "1")
+        _text(freight_li, "Rate", str(payload["freight_amount"]))
+
+    # Tax — passed as a pre-calculated amount via a tax item
+    # QB Desktop requires a SalesTaxCodeRef or a tax line item.
+    # We use a non-taxable item "Sales Tax" to record the Avalara-calculated amount.
+    if payload.get("tax_amount") and float(payload["tax_amount"]) != 0:
+        tax_li = ET.SubElement(inv, "InvoiceLineAdd")
+        _text(tax_li, "ItemRef/FullName", "Sales Tax")
+        _text(tax_li, "Desc", "Sales Tax (Avalara)")
+        _text(tax_li, "Quantity", "1")
+        _text(tax_li, "Rate", str(payload["tax_amount"]))
+
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
+def build_customer_query(customer_name: str) -> str:
+    """Check if a customer exists in QB by full name."""
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "CustomerQueryRq", requestID="1")
+    _text(req, "FullName", customer_name)
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
+def build_item_query(item_name: str) -> str:
+    """Check if an item exists in QB by full name."""
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "ItemNonInventoryQueryRq", requestID="1")
+    _text(req, "FullName", item_name)
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
+def _build_ship_to(parent: ET.Element, payload: dict):
+    if not payload.get("ship_to_name"):
+        return
+    addr = ET.SubElement(parent, "ShipAddress")
+    _text(addr, "Addr1", payload.get("ship_to_name", ""))
+    if payload.get("ship_to_addr1"):
+        _text(addr, "Addr2", payload["ship_to_addr1"])
+    if payload.get("ship_to_addr2"):
+        _text(addr, "Addr3", payload["ship_to_addr2"])
+    _text(addr, "City", payload.get("ship_to_city", ""))
+    _text(addr, "State", payload.get("ship_to_state", ""))
+    _text(addr, "PostalCode", payload.get("ship_to_zip", ""))
+
+
+def _text(parent: ET.Element, path: str, value: str):
+    """Set a possibly-nested element's text, creating intermediates as needed."""
+    parts = path.split("/")
+    el = parent
+    for part in parts:
+        existing = el.find(part)
+        if existing is not None:
+            el = existing
+        else:
+            el = ET.SubElement(el, part)
+    el.text = value
+
+
+def _wrap_qbxml(inner: str) -> str:
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<?qbxml version="16.0"?>'
+        + inner
+    )
