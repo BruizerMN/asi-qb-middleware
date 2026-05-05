@@ -8,6 +8,7 @@ import middleware.db as db
 from middleware.wc_soap import handle_soap
 from middleware.fm_routes import bp as fm_bp
 from middleware.config import PORT
+from version import VERSION, BUILD
 
 
 def create_app():
@@ -24,7 +25,7 @@ def create_app():
 
     @app.get("/health")
     def health():
-        return {"status": "ok"}
+        return {"status": "ok", "version": VERSION, "build": BUILD}
 
     return app
 
