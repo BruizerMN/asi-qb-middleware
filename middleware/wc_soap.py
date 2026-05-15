@@ -123,38 +123,57 @@ def _close_connection(el: ET.Element) -> str:
 # ---------------------------------------------------------------------------
 
 def _handle_success_response(response_xml: str):
-    """Parse QB's InvoiceAddRs and update the job record."""
+    """Dispatch QB response to the appropriate handler by response type."""
     if not response_xml:
         return
     try:
         root = ET.fromstring(response_xml)
-        # requestID was set to job_id when we sent the request
         rs = root.find(".//{*}InvoiceAddRs")
-        if rs is None:
+        if rs is not None:
+            _handle_invoice_add_rs(rs)
             return
-        job_id = rs.get("requestID")
-        status = rs.get("statusCode", "")
-        if status == "0":
-            txn_id = _find_text(rs, "InvoiceRet/TxnID") or ""
-            ref_number = _find_text(rs, "InvoiceRet/RefNumber") or ""
-            db.mark_done(job_id, qb_invoice_id=ref_number or txn_id)
-        else:
-            msg = rs.get("statusMessage", "Unknown QB error")
-            db.mark_error(job_id, error_msg=f"statusCode={status}: {msg}")
+        rs = root.find(".//{*}CompanyQueryRs")
+        if rs is not None:
+            _handle_company_query_rs(rs)
+            return
     except ET.ParseError:
         pass
 
 
+def _handle_invoice_add_rs(rs: ET.Element):
+    job_id = rs.get("requestID")
+    status = rs.get("statusCode", "")
+    if status == "0":
+        txn_id = _find_text(rs, "InvoiceRet/TxnID") or ""
+        ref_number = _find_text(rs, "InvoiceRet/RefNumber") or ""
+        db.mark_done(job_id, qb_invoice_id=ref_number or txn_id)
+    else:
+        msg = rs.get("statusMessage", "Unknown QB error")
+        db.mark_error(job_id, error_msg=f"statusCode={status}: {msg}")
+
+
+def _handle_company_query_rs(rs: ET.Element):
+    job_id = rs.get("requestID")
+    status = rs.get("statusCode", "")
+    if status == "0":
+        company_name = _find_text(rs, "CompanyRet/CompanyName") or "unknown"
+        db.mark_done(job_id, qb_invoice_id=company_name)
+    else:
+        msg = rs.get("statusMessage", "Unknown QB error")
+        db.mark_error(job_id, error_msg=f"statusCode={status}: {msg}")
+
+
 def _handle_error_response(response_xml: str, hresult: str, message: str):
     """Mark the in-flight sent job as errored when QBWC reports a problem."""
-    # Best-effort: try to extract job_id from requestID in the response
     job_id = None
     if response_xml:
         try:
             root = ET.fromstring(response_xml)
-            rs = root.find(".//{*}InvoiceAddRs")
-            if rs is not None:
-                job_id = rs.get("requestID")
+            for el in root.iter():
+                req_id = el.get("requestID")
+                if req_id:
+                    job_id = req_id
+                    break
         except ET.ParseError:
             pass
     if job_id:
@@ -166,8 +185,12 @@ def _handle_error_response(response_xml: str, hresult: str, message: str):
 # ---------------------------------------------------------------------------
 
 def _find_text(el: ET.Element, tag: str) -> str:
-    child = el.find(f".//{tag}")
-    return (child.text or "").strip() if child is not None else ""
+    # Use local-name matching to handle QBWC's xmlns namespace on elements
+    for child in el.iter():
+        local = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        if local == tag:
+            return (child.text or "").strip()
+    return ""
 
 
 def _cdata(content: str) -> str:

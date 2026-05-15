@@ -15,7 +15,7 @@ from flask import Blueprint, request, jsonify
 
 import middleware.db as db
 from middleware.config import API_KEY
-from middleware.qbxml_builder import build_invoice_add
+from middleware.qbxml_builder import build_invoice_add, build_company_query
 
 bp = Blueprint("fm", __name__, url_prefix="/fm")
 
@@ -62,6 +62,19 @@ def queue_invoice():
     qbxml = build_invoice_add(invoice)
     job_id = db.enqueue_job(company, str(order_id), qbxml)
 
+    return jsonify({"job_id": job_id, "status": "pending"}), 202
+
+
+@bp.post("/ping")
+@require_api_key
+def queue_ping():
+    """Queue a CompanyQueryRq to verify QB connectivity. Returns job_id for polling via /fm/job/<id>."""
+    data = request.get_json(force=True, silent=True) or {}
+    company = data.get("company", "acoustical").lower()
+    if company not in ("acoustical", "architectural"):
+        return jsonify({"error": "company must be 'acoustical' or 'architectural'"}), 400
+    qbxml = build_company_query()
+    job_id = db.enqueue_job(company, "ping", qbxml)
     return jsonify({"job_id": job_id, "status": "pending"}), 202
 
 

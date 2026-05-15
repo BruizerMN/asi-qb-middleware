@@ -13,7 +13,7 @@ Write-Host "Pulling latest from GitHub..."
 git pull origin main
 
 Write-Host "Restarting service..."
-nssm restart $ServiceName
+C:\Tools\nssm.exe restart $ServiceName
 
 Write-Host ""
 Write-Host "Deploy complete." -ForegroundColor Green

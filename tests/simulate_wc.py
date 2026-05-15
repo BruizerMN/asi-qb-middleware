@@ -30,9 +30,11 @@ def soap(method, body):
     return r.text
 
 
-def run_simulation(company="acoustical", user="asi_acoustical", password="change-me"):
+def run_simulation(company="acoustical", user="wc_acoustical", password="wc-acoustical-2026"):
     print("=== Simulating QuickBooks Web Connector session ===")
     print(f"Company: {company}")
+
+    import re
 
     # Step 1: authenticate
     auth_response = soap("authenticate", f"""
@@ -40,8 +42,6 @@ def run_simulation(company="acoustical", user="asi_acoustical", password="change
         <strPassword>{password}</strPassword>
     """)
 
-    # Extract ticket (rough parse — good enough for testing)
-    import re
     ticket_match = re.search(r"<ticket>(.*?)</ticket>", auth_response)
     if not ticket_match or not ticket_match.group(1):
         print("\nAuthentication failed or no pending jobs.")
@@ -61,12 +61,21 @@ def run_simulation(company="acoustical", user="asi_acoustical", password="change
         soap("closeConnection", f"<ticket>{ticket}</ticket>")
         return
 
-    # Step 3: simulate QB processing — fake a successful response
-    # In real life QBWC sends the actual QB response here.
     fake_request_id = re.search(r'requestID="([^"]+)"', qbxml)
     req_id = fake_request_id.group(1) if fake_request_id else "1"
 
-    fake_response = f"""<?xml version="1.0"?><?qbxml version="16.0"?>
+    # Step 3: build fake response matching the request type
+    if "CompanyQueryRq" in qbxml:
+        fake_response = f"""<?xml version="1.0"?><?qbxml version="16.0"?>
+<QBXML><QBXMLMsgsRs>
+  <CompanyQueryRs requestID="{req_id}" statusCode="0" statusSeverity="Info" statusMessage="Status OK">
+    <CompanyRet>
+      <CompanyName>Acoustical Surfaces (SIMULATED)</CompanyName>
+    </CompanyRet>
+  </CompanyQueryRs>
+</QBXMLMsgsRs></QBXML>"""
+    else:
+        fake_response = f"""<?xml version="1.0"?><?qbxml version="16.0"?>
 <QBXML><QBXMLMsgsRs>
   <InvoiceAddRs requestID="{req_id}" statusCode="0" statusSeverity="Info" statusMessage="Status OK">
     <InvoiceRet>
@@ -90,5 +99,9 @@ def run_simulation(company="acoustical", user="asi_acoustical", password="change
 
 if __name__ == "__main__":
     company = sys.argv[1] if len(sys.argv) > 1 else "acoustical"
-    user_map = {"acoustical": "asi_acoustical", "architectural": "asi_architectural"}
-    run_simulation(company=company, user=user_map.get(company, "asi_acoustical"))
+    user_map = {
+        "acoustical":    ("wc_acoustical",    "wc-acoustical-2026"),
+        "architectural": ("wc_architectural", "wc-architectural-2026"),
+    }
+    user, password = user_map.get(company, user_map["acoustical"])
+    run_simulation(company=company, user=user, password=password)

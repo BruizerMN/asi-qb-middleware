@@ -143,6 +143,14 @@ def _text(parent: ET.Element, path: str, value: str):
     el.text = value
 
 
+def build_company_query() -> str:
+    """Return a qbXML CompanyQueryRq — used to verify QB connectivity."""
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    ET.SubElement(msgs, "CompanyQueryRq", requestID="1")
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
 def _wrap_qbxml(inner: str) -> str:
     return (
         '<?xml version="1.0" encoding="utf-8"?>'
