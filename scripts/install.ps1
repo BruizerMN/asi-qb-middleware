@@ -9,7 +9,7 @@
 Set-StrictMode -Off
 $ErrorActionPreference = "Stop"
 
-$ScriptBuild = "0017"
+$ScriptBuild = "0018"
 
 $RepoUrl  = "https://github.com/BruizerMN/asi-qb-middleware.git"
 $RepoPath = "C:\Services\asi-qb-middleware"
@@ -202,7 +202,20 @@ if (Test-Path $EnvFile) {
 
     $port = "5100"
 
-    $envContent = "API_KEY=" + $apiKey + "`r`nPORT=" + $port + "`r`n"
+    Write-Host ""
+    Write-Host "  QuickBooks company file paths (on the Q: drive, include .QBW extension)." -ForegroundColor White
+    Write-Host "  These are the TEST company files for now -- update .env at production cutover." -ForegroundColor Yellow
+    Write-Host ""
+    $qbFileAcoustical    = Read-Host "  QB_FILE_ACOUSTICAL (Acoustical Surfaces)"
+    $qbFileArchitectural = Read-Host "  QB_FILE_ARCHITECTURAL (Architectural Surfaces)"
+
+    if ([string]::IsNullOrWhiteSpace($qbFileAcoustical))    { Abort "QB_FILE_ACOUSTICAL cannot be blank." }
+    if ([string]::IsNullOrWhiteSpace($qbFileArchitectural)) { Abort "QB_FILE_ARCHITECTURAL cannot be blank." }
+
+    $envContent = "API_KEY=" + $apiKey + "`r`n" +
+                  "PORT=" + $port + "`r`n" +
+                  "QB_FILE_ACOUSTICAL=" + $qbFileAcoustical + "`r`n" +
+                  "QB_FILE_ARCHITECTURAL=" + $qbFileArchitectural + "`r`n"
     $utf8NoBom = New-Object System.Text.UTF8Encoding $False
     [System.IO.File]::WriteAllText($EnvFile, $envContent, $utf8NoBom)
 

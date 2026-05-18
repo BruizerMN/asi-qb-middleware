@@ -5,17 +5,16 @@ FileMaker uses Insert from URL to call these. All requests must include:
     X-API-Key: <shared secret from .env>
 
 Endpoints:
-    POST /fm/invoice          — queue a new invoice job
-    GET  /fm/job/<job_id>     — check job status / retrieve QB invoice ID
+    POST /fm/invoice   — submit an invoice to QuickBooks (synchronous via COM)
+    POST /fm/ping      — verify QB is running and check which company is open
 """
 
-import json
 from functools import wraps
 from flask import Blueprint, request, jsonify
 
-import middleware.db as db
 from middleware.config import API_KEY
-from middleware.qbxml_builder import build_invoice_add, build_company_query
+from middleware.qbxml_builder import build_invoice_add
+import middleware.com_handler as com
 
 bp = Blueprint("fm", __name__, url_prefix="/fm")
 
@@ -31,76 +30,67 @@ def require_api_key(f):
 
 @bp.post("/invoice")
 @require_api_key
-def queue_invoice():
+def post_invoice():
     """
-    FM posts a JSON invoice payload here.
+    FM posts a JSON invoice payload here. Submits synchronously to QB via COM.
 
-    Required top-level fields:
+    Required fields:
         company    — "acoustical" or "architectural"
-        order_id   — FM order ID (for logging / deduplication)
-        invoice    — the invoice dict (see qbxml_builder.py for schema)
+        order_id   — FM order ID (included in response for FM to match)
+        invoice    — invoice dict (see qbxml_builder.py for schema)
 
     Returns:
-        {"job_id": "<uuid>", "status": "pending"}
+        {"status": "ok",    "qb_invoice_id": "1042", "order_id": "..."}
+        {"status": "error", "error": "..."}
     """
     data = request.get_json(force=True, silent=True)
     if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
+        return jsonify({"status": "error", "error": "Invalid JSON"}), 400
 
     company = data.get("company", "").lower()
     if company not in ("acoustical", "architectural"):
-        return jsonify({"error": "company must be 'acoustical' or 'architectural'"}), 400
+        return jsonify({"status": "error", "error": "company must be 'acoustical' or 'architectural'"}), 400
 
     order_id = data.get("order_id")
     if not order_id:
-        return jsonify({"error": "order_id is required"}), 400
+        return jsonify({"status": "error", "error": "order_id is required"}), 400
 
     invoice = data.get("invoice")
     if not invoice:
-        return jsonify({"error": "invoice payload is required"}), 400
+        return jsonify({"status": "error", "error": "invoice payload is required"}), 400
 
-    qbxml = build_invoice_add(invoice)
-    job_id = db.enqueue_job(company, str(order_id), qbxml)
-
-    return jsonify({"job_id": job_id, "status": "pending"}), 202
+    try:
+        qbxml = build_invoice_add(invoice)
+        qb_invoice_id = com.submit_invoice(qbxml, company)
+        return jsonify({
+            "status": "ok",
+            "qb_invoice_id": qb_invoice_id,
+            "order_id": str(order_id),
+        })
+    except RuntimeError as e:
+        return jsonify({"status": "error", "error": str(e)}), 422
+    except Exception as e:
+        return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
 
 
 @bp.post("/ping")
 @require_api_key
-def queue_ping():
-    """Queue a CompanyQueryRq to verify QB connectivity. Returns job_id for polling via /fm/job/<id>."""
-    data = request.get_json(force=True, silent=True) or {}
-    company = data.get("company", "acoustical").lower()
-    if company not in ("acoustical", "architectural"):
-        return jsonify({"error": "company must be 'acoustical' or 'architectural'"}), 400
-    qbxml = build_company_query()
-    job_id = db.enqueue_job(company, "ping", qbxml)
-    return jsonify({"job_id": job_id, "status": "pending"}), 202
-
-
-@bp.get("/job/<job_id>")
-@require_api_key
-def get_job_status(job_id):
+def ping():
     """
-    FM polls this to check if a job is done and retrieve the QB invoice ID.
+    Verify QB is running and return which company file is open.
 
     Returns:
-        {
-            "job_id": "...",
-            "status": "pending|sent|done|error",
-            "qb_invoice_id": "1042",   # present when status=done
-            "error_msg": "...",        # present when status=error
-            "order_id": "..."
-        }
+        {"status": "ok",    "company_name": "...", "company_file": "..."}
+        {"status": "error", "error": "..."}
     """
-    job = db.get_job(job_id)
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
-
-    return jsonify({
-        "job_id": job["id"],
-        "status": job["status"],
-        "order_id": job["order_id"],
-        "qb_invoice_id": job.get("qb_invoice_id"),
-        "error_msg": job.get("error_msg"),
-    })
+    try:
+        info = com.get_open_company()
+        return jsonify({
+            "status": "ok",
+            "company_name": info["name"],
+            "company_file": info["file"],
+        })
+    except RuntimeError as e:
+        return jsonify({"status": "error", "error": str(e)}), 422
+    except Exception as e:
+        return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
