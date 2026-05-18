@@ -187,10 +187,7 @@ if (Test-Path $EnvFile) {
     $apiKey = Read-Host "  API_KEY"
     if ([string]::IsNullOrWhiteSpace($apiKey)) { Abort "API_KEY cannot be blank." }
 
-    Write-Host ""
-    Write-Host "  Port for the middleware (press Enter for default 5100):" -ForegroundColor White
-    $port = Read-Host "  PORT"
-    if ([string]::IsNullOrWhiteSpace($port)) { $port = "5100" }
+    $port = "5100"
 
     $envContent = "API_KEY=" + $apiKey + "`r`nPORT=" + $port + "`r`n"
     [System.IO.File]::WriteAllText($EnvFile, $envContent, [System.Text.Encoding]::UTF8)
@@ -257,17 +254,34 @@ Write-Header "Starting middleware"
 
 Write-Step "Starting task..."
 Start-ScheduledTask -TaskName $TaskName
-Start-Sleep -Seconds 4
 
-try {
-    $resp = Invoke-RestMethod -Uri "http://localhost:$portVal/health" -TimeoutSec 5
+$maxAttempts = 8
+$attempt     = 0
+$running     = $false
+
+while ($attempt -lt $maxAttempts -and -not $running) {
+    $attempt++
+    Start-Sleep -Seconds 2
+    Write-Step "Health check (attempt $attempt of $maxAttempts)..."
+    try {
+        $resp    = Invoke-RestMethod -Uri "http://localhost:$portVal/health" -TimeoutSec 3
+        $running = $true
+    } catch {
+        # still starting
+    }
+}
+
+if ($running) {
     Write-OK "Middleware is running!"
     Write-Host ""
     Write-Host "      Version : $($resp.version)" -ForegroundColor White
     Write-Host "      Build   : $($resp.build)"   -ForegroundColor White
-} catch {
-    Write-Warn "Health check timed out -- middleware may still be starting."
-    Write-Host "    Check manually: Invoke-RestMethod http://localhost:$portVal/health" -ForegroundColor Gray
+} else {
+    Write-Warn "Middleware did not respond after $($maxAttempts * 2) seconds."
+    Write-Host "    Check Task Scheduler for errors, or run manually:" -ForegroundColor Gray
+    Write-Host "    python $RepoPath\app.py" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "    To test once running: Invoke-RestMethod http://localhost:$portVal/health" -ForegroundColor Gray
 }
 
 # ---------------------------------------------------------------------------
