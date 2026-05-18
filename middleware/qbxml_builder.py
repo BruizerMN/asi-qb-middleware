@@ -48,28 +48,30 @@ def build_invoice_add(payload: dict) -> str:
     req = ET.SubElement(msgs, "InvoiceAddRq", requestID="1")
     inv = ET.SubElement(req, "InvoiceAdd")
 
+    # QB SDK requires strict element order in InvoiceAdd
     _text(inv, "CustomerRef/FullName", payload["customer_name"])
+
+    if payload.get("class_id"):
+        _text(inv, "ClassRef/ListID", payload["class_id"])
+
     _text(inv, "TxnDate", payload["order_date"])
 
     if payload.get("cust_po"):
         _text(inv, "RefNumber", payload["cust_po"])
 
+    _build_ship_to(inv, payload)
+
     if payload.get("po_number"):
         _text(inv, "PONumber", payload["po_number"])
-
-    if payload.get("class_id"):
-        _text(inv, "ClassRef/ListID", payload["class_id"])
-
-    if payload.get("ship_via"):
-        _text(inv, "ShipMethodRef/FullName", payload["ship_via"])
-
-    if payload.get("ship_date"):
-        _text(inv, "ShipDate", payload["ship_date"])
 
     if payload.get("salesperson"):
         _text(inv, "SalesRepRef/FullName", payload["salesperson"])
 
-    _build_ship_to(inv, payload)
+    if payload.get("ship_date"):
+        _text(inv, "ShipDate", payload["ship_date"])
+
+    if payload.get("ship_via"):
+        _text(inv, "ShipMethodRef/FullName", payload["ship_via"])
 
     if payload.get("memo"):
         _text(inv, "Memo", payload["memo"])
