@@ -13,6 +13,9 @@ $RepoUrl  = "https://github.com/BruizerMN/asi-qb-middleware.git"
 $RepoPath = "C:\Services\asi-qb-middleware"
 $TaskName = "ASI QB Middleware"
 
+$PythonInstallerUrl = "https://www.python.org/ftp/python/3.12.4/python-3.12.4-amd64.exe"
+$GitInstallerUrl    = "https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -46,6 +49,28 @@ function Command-Exists($cmd) {
     return [bool](Get-Command $cmd -ErrorAction SilentlyContinue)
 }
 
+function Install-ViaWinget($id, $label) {
+    Write-Step "Installing $label via winget..."
+    winget install --id $id --silent --accept-package-agreements --accept-source-agreements
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Install-ViaDownload($url, $label, $silentArgs) {
+    $installer = "$env:TEMP\asi-installer-$([System.IO.Path]::GetFileName($url))"
+    Write-Step "Downloading $label installer..."
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+    } catch {
+        Abort "Download failed for $label. Check internet connection and try again. ($($_.Exception.Message))"
+    }
+    Write-Step "Installing $label..."
+    $proc = Start-Process -FilePath $installer -ArgumentList $silentArgs -Wait -PassThru
+    Remove-Item $installer -ErrorAction SilentlyContinue
+    if ($proc.ExitCode -ne 0) {
+        Abort "$label installer exited with code $($proc.ExitCode)."
+    }
+}
+
 # ---------------------------------------------------------------------------
 # Banner
 # ---------------------------------------------------------------------------
@@ -55,52 +80,61 @@ Write-Host "  ASI QuickBooks Middleware -- Workstation Installer" -ForegroundCol
 Write-Host "  ===================================================" -ForegroundColor Cyan
 
 # ---------------------------------------------------------------------------
-# Check winget
-# ---------------------------------------------------------------------------
-
-Write-Header "Checking prerequisites"
-
-if (-not (Command-Exists "winget")) {
-    Abort "winget not found. Update Windows (Win 10 1709+ or Win 11 required) or install App Installer from the Microsoft Store."
-}
-Write-OK "winget available"
-
-# ---------------------------------------------------------------------------
 # Install Python
 # ---------------------------------------------------------------------------
 
+Write-Header "Python"
+
 if (Command-Exists "python") {
     $pyver = & python --version 2>&1
-    Write-OK "Python already installed ($pyver)"
+    Write-OK "Already installed ($pyver)"
 } else {
-    Write-Step "Installing Python 3.12..."
-    winget install --id Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
-    if ($LASTEXITCODE -ne 0) { Abort "Python install failed (winget exit $LASTEXITCODE)." }
-    Refresh-Path
+    $wingetOk = $false
+    if (Command-Exists "winget") {
+        $wingetOk = Install-ViaWinget "Python.Python.3.12" "Python 3.12"
+        Refresh-Path
+    }
+
+    if (-not $wingetOk -or -not (Command-Exists "python")) {
+        if ($wingetOk) { Write-Warn "winget reported success but python not found -- trying direct download..." }
+        Install-ViaDownload $PythonInstallerUrl "Python 3.12.4" "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0"
+        Refresh-Path
+    }
+
     if (-not (Command-Exists "python")) {
-        Abort "Python installed but not yet on PATH. Close this window, reopen PowerShell, and re-run the installer."
+        Abort "Python installed but not found on PATH. Close this window, reopen PowerShell, and re-run the installer."
     }
     $pyver = & python --version 2>&1
-    Write-OK "Python installed ($pyver)"
+    Write-OK "Installed ($pyver)"
 }
 
 # ---------------------------------------------------------------------------
 # Install Git
 # ---------------------------------------------------------------------------
 
+Write-Header "Git"
+
 if (Command-Exists "git") {
     $gitver = & git --version 2>&1
-    Write-OK "Git already installed ($gitver)"
+    Write-OK "Already installed ($gitver)"
 } else {
-    Write-Step "Installing Git..."
-    winget install --id Git.Git --silent --accept-package-agreements --accept-source-agreements
-    if ($LASTEXITCODE -ne 0) { Abort "Git install failed (winget exit $LASTEXITCODE)." }
-    Refresh-Path
+    $wingetOk = $false
+    if (Command-Exists "winget") {
+        $wingetOk = Install-ViaWinget "Git.Git" "Git"
+        Refresh-Path
+    }
+
+    if (-not $wingetOk -or -not (Command-Exists "git")) {
+        if ($wingetOk) { Write-Warn "winget reported success but git not found -- trying direct download..." }
+        Install-ViaDownload $GitInstallerUrl "Git 2.45.2" "/VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS"
+        Refresh-Path
+    }
+
     if (-not (Command-Exists "git")) {
-        Abort "Git installed but not yet on PATH. Close this window, reopen PowerShell, and re-run the installer."
+        Abort "Git installed but not found on PATH. Close this window, reopen PowerShell, and re-run the installer."
     }
     $gitver = & git --version 2>&1
-    Write-OK "Git installed ($gitver)"
+    Write-OK "Installed ($gitver)"
 }
 
 # ---------------------------------------------------------------------------
@@ -119,7 +153,7 @@ if (Test-Path "$RepoPath\.git") {
     Write-Step "Cloning repo to $RepoPath ..."
     New-Item -ItemType Directory -Force -Path $RepoPath | Out-Null
     git clone $RepoUrl $RepoPath
-    if ($LASTEXITCODE -ne 0) { Abort "git clone failed." }
+    if ($LASTEXITCODE -ne 0) { Abort "git clone failed. Make sure you have network access to GitHub." }
     Set-Location $RepoPath
     Write-OK "Repo cloned"
 }
