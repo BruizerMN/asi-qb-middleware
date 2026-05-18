@@ -190,7 +190,8 @@ if (Test-Path $EnvFile) {
     $port = "5100"
 
     $envContent = "API_KEY=" + $apiKey + "`r`nPORT=" + $port + "`r`n"
-    [System.IO.File]::WriteAllText($EnvFile, $envContent, [System.Text.Encoding]::UTF8)
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $False
+    [System.IO.File]::WriteAllText($EnvFile, $envContent, $utf8NoBom)
 
     Write-OK ".env created"
 }
