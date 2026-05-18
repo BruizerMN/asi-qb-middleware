@@ -5,8 +5,9 @@ FileMaker uses Insert from URL to call these. All requests must include:
     X-API-Key: <shared secret from .env>
 
 Endpoints:
-    POST /fm/invoice   — submit an invoice to QuickBooks (synchronous via COM)
-    POST /fm/ping      — verify QB is running and check which company is open
+    POST /fm/invoice       — submit an invoice to QuickBooks (synchronous via COM)
+    POST /fm/ping          — verify QB is running and check which company is open
+    POST /fm/debug-invoice — return generated qbXML without submitting (dev only)
 """
 
 from functools import wraps
@@ -71,6 +72,23 @@ def post_invoice():
         return jsonify({"status": "error", "error": str(e)}), 422
     except Exception as e:
         return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+
+
+@bp.post("/debug-invoice")
+@require_api_key
+def debug_invoice():
+    """Return the generated qbXML without submitting — for debugging parse errors."""
+    data = request.get_json(force=True, silent=True)
+    if not data:
+        return jsonify({"status": "error", "error": "Invalid JSON"}), 400
+    invoice = data.get("invoice")
+    if not invoice:
+        return jsonify({"status": "error", "error": "invoice payload is required"}), 400
+    try:
+        qbxml = build_invoice_add(invoice)
+        return jsonify({"status": "ok", "qbxml": qbxml})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @bp.post("/ping")
