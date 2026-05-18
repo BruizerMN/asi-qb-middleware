@@ -9,7 +9,7 @@
 Set-StrictMode -Off
 $ErrorActionPreference = "Stop"
 
-$ScriptBuild = "0014"
+$ScriptBuild = "0017"
 
 $RepoUrl  = "https://github.com/BruizerMN/asi-qb-middleware.git"
 $RepoPath = "C:\Services\asi-qb-middleware"
