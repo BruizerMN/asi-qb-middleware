@@ -9,6 +9,8 @@
 Set-StrictMode -Off
 $ErrorActionPreference = "Stop"
 
+$ScriptBuild = "0014"
+
 $RepoUrl  = "https://github.com/BruizerMN/asi-qb-middleware.git"
 $RepoPath = "C:\Services\asi-qb-middleware"
 $TaskName = "ASI QB Middleware"
@@ -78,6 +80,7 @@ function Install-ViaDownload($url, $label, $silentArgs) {
 Write-Host ""
 Write-Host "  ASI QuickBooks Middleware -- Workstation Installer" -ForegroundColor Cyan
 Write-Host "  ===================================================" -ForegroundColor Cyan
+Write-Host "  Installer build: $ScriptBuild" -ForegroundColor Gray
 
 # ---------------------------------------------------------------------------
 # Install Python
