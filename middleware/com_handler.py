@@ -170,12 +170,18 @@ def submit_invoice(qbxml: str, expected_slug: str) -> str:
             )
 
         txn_number = rs.findtext(".//TxnNumber")
-        if not txn_number:
+        ref_number = rs.findtext(".//RefNumber")
+        txn_id     = rs.findtext(".//TxnID")
+
+        # Return whichever identifier QB provided — prefer RefNumber (user-visible)
+        invoice_number = ref_number or txn_number or txn_id
+        if not invoice_number:
             raise RuntimeError(
-                "Invoice was created in QuickBooks but no invoice number was returned."
+                f"Invoice was created in QuickBooks but no invoice number was returned. "
+                f"Response: {ET.tostring(rs, encoding='unicode')}"
             )
 
-        return txn_number
+        return invoice_number
 
     finally:
         _close_session(rp, ticket)
