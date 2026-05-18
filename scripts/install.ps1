@@ -85,8 +85,8 @@ Write-Host "  ===================================================" -ForegroundCo
 
 Write-Header "Python"
 
-if (Command-Exists "python") {
-    $pyver = & python --version 2>&1
+if ((Command-Exists "py") -or (Command-Exists "python")) {
+    $pyver = & py --version 2>&1
     Write-OK "Already installed ($pyver)"
 } else {
     $wingetOk = $false
