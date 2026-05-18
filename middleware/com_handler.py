@@ -40,7 +40,9 @@ def _open_session():
 
     # COM must be initialized on each thread that uses it.
     # Flask handles requests on worker threads where this hasn't been done.
-    pythoncom.CoInitialize()
+    # MTA (COINIT_MULTITHREADED) is required -- STA needs a Windows message
+    # pump to deliver cross-process COM responses, which Flask threads don't have.
+    pythoncom.CoInitializeEx(0, pythoncom.COINIT_MULTITHREADED)
 
     try:
         rp = win32com.client.Dispatch("QBXMLRP2.RequestProcessor")
@@ -66,6 +68,7 @@ def _open_session():
         except Exception:
             pass
         pythoncom.CoUninitialize()
+
         raise RuntimeError(
             "Could not begin QB session. Make sure a company file is open "
             f"in QuickBooks. ({e})"
