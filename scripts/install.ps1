@@ -97,7 +97,7 @@ if (Command-Exists "python") {
 
     if (-not $wingetOk -or -not (Command-Exists "python")) {
         if ($wingetOk) { Write-Warn "winget reported success but python not found -- trying direct download..." }
-        Install-ViaDownload $PythonInstallerUrl "Python 3.12.4" "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0"
+        Install-ViaDownload $PythonInstallerUrl "Python 3.12.4" "/quiet InstallAllUsers=0 PrependPath=1 Include_test=0"
         Refresh-Path
     }
 
