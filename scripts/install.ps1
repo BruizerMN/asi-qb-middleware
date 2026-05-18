@@ -117,8 +117,14 @@ if ((Command-Exists "py") -or (Command-Exists "python")) {
 
 Write-Header "Git"
 
-if (Command-Exists "git") {
-    $gitver = & git --version 2>&1
+$gitExe = "git"
+if (-not (Command-Exists "git")) {
+    $gitFallback = "C:\Program Files\Git\cmd\git.exe"
+    if (Test-Path $gitFallback) { $gitExe = $gitFallback }
+}
+
+if ((Command-Exists "git") -or (Test-Path "C:\Program Files\Git\cmd\git.exe")) {
+    $gitver = & $gitExe --version 2>&1
     Write-OK "Already installed ($gitver)"
 } else {
     $wingetOk = $false
@@ -133,10 +139,14 @@ if (Command-Exists "git") {
         Refresh-Path
     }
 
+    Refresh-Path
+    $gitExe = "git"
     if (-not (Command-Exists "git")) {
-        Abort "Git installed but not found on PATH. Close this window, reopen PowerShell, and re-run the installer."
+        $gitFallback = "C:\Program Files\Git\cmd\git.exe"
+        if (Test-Path $gitFallback) { $gitExe = $gitFallback }
+        else { Abort "Git installed but not found. Close this window, reopen PowerShell, and re-run the installer." }
     }
-    $gitver = & git --version 2>&1
+    $gitver = & $gitExe --version 2>&1
     Write-OK "Installed ($gitver)"
 }
 
@@ -149,13 +159,13 @@ Write-Header "Middleware code"
 if (Test-Path "$RepoPath\.git") {
     Write-Step "Pulling latest from GitHub..."
     Set-Location $RepoPath
-    git pull origin main
+    & $gitExe pull origin main
     if ($LASTEXITCODE -ne 0) { Abort "git pull failed." }
     Write-OK "Repo updated"
 } else {
     Write-Step "Cloning repo to $RepoPath ..."
     New-Item -ItemType Directory -Force -Path $RepoPath | Out-Null
-    git clone $RepoUrl $RepoPath
+    & $gitExe clone $RepoUrl $RepoPath
     if ($LASTEXITCODE -ne 0) { Abort "git clone failed. Make sure you have network access to GitHub." }
     Set-Location $RepoPath
     Write-OK "Repo cloned"
