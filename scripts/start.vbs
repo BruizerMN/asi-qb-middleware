@@ -4,4 +4,4 @@ Dim shell, repoPath
 repoPath = "C:\Services\asi-qb-middleware"
 Set shell = CreateObject("WScript.Shell")
 shell.CurrentDirectory = repoPath
-shell.Run "py app.py", 0, False
+shell.Run "py app.py", 0, True
