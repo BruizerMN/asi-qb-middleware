@@ -143,14 +143,14 @@ def _build_ship_to(parent: ET.Element, payload: dict):
     if not payload.get("ship_to_name"):
         return
     addr = ET.SubElement(parent, "ShipAddress")
-    _text(addr, "Addr1", _ascii_safe(payload.get("ship_to_name", "")))
+    _text(addr, "Addr1", _ascii_safe(payload.get("ship_to_name", ""))[:41])
     if payload.get("ship_to_addr1"):
-        _text(addr, "Addr2", _ascii_safe(payload["ship_to_addr1"]))
+        _text(addr, "Addr2", _ascii_safe(payload["ship_to_addr1"])[:41])
     if payload.get("ship_to_addr2"):
-        _text(addr, "Addr3", _ascii_safe(payload["ship_to_addr2"]))
-    _text(addr, "City", _ascii_safe(payload.get("ship_to_city", "")))
-    _text(addr, "State", _ascii_safe(payload.get("ship_to_state", "")))
-    _text(addr, "PostalCode", _ascii_safe(payload.get("ship_to_zip", "")))
+        _text(addr, "Addr3", _ascii_safe(payload["ship_to_addr2"])[:41])
+    _text(addr, "City", _ascii_safe(payload.get("ship_to_city", ""))[:31])
+    _text(addr, "State", _ascii_safe(payload.get("ship_to_state", ""))[:21])
+    _text(addr, "PostalCode", _ascii_safe(payload.get("ship_to_zip", ""))[:13])
 
 
 def _text(parent: ET.Element, path: str, value: str):
