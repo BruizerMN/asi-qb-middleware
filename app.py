@@ -9,6 +9,12 @@ from middleware.fm_routes import bp as fm_bp
 from middleware.config import PORT
 from version import VERSION, BUILD
 
+try:
+    import pythoncom
+    pythoncom.CoInitializeEx(pythoncom.COINIT_MULTITHREADED)
+except ImportError:
+    pass
+
 
 def create_app():
     app = Flask(__name__)
@@ -25,4 +31,6 @@ def create_app():
 
 if __name__ == "__main__":
     app = create_app()
-    app.run(host="0.0.0.0", port=PORT, debug=True)
+    # threaded=False: all requests on the main thread, same as standalone Python.
+    # debug=False: disables Werkzeug reloader subprocess which complicates COM access.
+    app.run(host="0.0.0.0", port=PORT, debug=False, threaded=False)

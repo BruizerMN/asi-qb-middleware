@@ -38,16 +38,9 @@ def _open_session():
             "pywin32 is not installed. Run: pip install pywin32"
         )
 
-    # COM must be initialized on each thread that uses it.
-    # Flask handles requests on worker threads where this hasn't been done.
-    # MTA (COINIT_MULTITHREADED) is required -- STA needs a Windows message
-    # pump to deliver cross-process COM responses, which Flask threads don't have.
-    pythoncom.CoInitializeEx(pythoncom.COINIT_MULTITHREADED)
-
     try:
         rp = win32com.client.Dispatch("QBXMLRP2.RequestProcessor")
     except Exception as e:
-        pythoncom.CoUninitialize()
         raise RuntimeError(
             "Could not connect to QuickBooks. Make sure QuickBooks Desktop "
             f"is running and a company file is open. ({e})"
@@ -56,7 +49,6 @@ def _open_session():
     try:
         rp.OpenConnection2("", APP_NAME, 1)
     except Exception as e:
-        pythoncom.CoUninitialize()
         raise RuntimeError(f"Could not open QB connection: {e}")
 
     try:
@@ -67,7 +59,6 @@ def _open_session():
             rp.CloseConnection()
         except Exception:
             pass
-        pythoncom.CoUninitialize()
 
         raise RuntimeError(
             "Could not begin QB session. Make sure a company file is open "
@@ -78,17 +69,13 @@ def _open_session():
 
 
 def _close_session(rp, ticket):
-    """Close QB session, connection, and uninitialize COM for this thread."""
+    """Close QB session and connection."""
     try:
         rp.EndSession(ticket)
     except Exception:
         pass
     try:
         rp.CloseConnection()
-    except Exception:
-        pass
-    try:
-        pythoncom.CoUninitialize()
     except Exception:
         pass
 
