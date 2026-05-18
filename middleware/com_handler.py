@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 
 try:
     import win32com.client
+    import pythoncom
     _COM_AVAILABLE = True
 except ImportError:
     _COM_AVAILABLE = False
@@ -37,9 +38,14 @@ def _open_session():
             "pywin32 is not installed. Run: pip install pywin32"
         )
 
+    # COM must be initialized on each thread that uses it.
+    # Flask handles requests on worker threads where this hasn't been done.
+    pythoncom.CoInitialize()
+
     try:
         rp = win32com.client.Dispatch("QBXMLRP2.RequestProcessor")
     except Exception as e:
+        pythoncom.CoUninitialize()
         raise RuntimeError(
             "Could not connect to QuickBooks. Make sure QuickBooks Desktop "
             f"is running and a company file is open. ({e})"
@@ -48,6 +54,7 @@ def _open_session():
     try:
         rp.OpenConnection2("", APP_NAME, 1)
     except Exception as e:
+        pythoncom.CoUninitialize()
         raise RuntimeError(f"Could not open QB connection: {e}")
 
     try:
@@ -58,6 +65,7 @@ def _open_session():
             rp.CloseConnection()
         except Exception:
             pass
+        pythoncom.CoUninitialize()
         raise RuntimeError(
             "Could not begin QB session. Make sure a company file is open "
             f"in QuickBooks. ({e})"
@@ -67,13 +75,17 @@ def _open_session():
 
 
 def _close_session(rp, ticket):
-    """Close QB session and connection gracefully."""
+    """Close QB session, connection, and uninitialize COM for this thread."""
     try:
         rp.EndSession(ticket)
     except Exception:
         pass
     try:
         rp.CloseConnection()
+    except Exception:
+        pass
+    try:
+        pythoncom.CoUninitialize()
     except Exception:
         pass
 
