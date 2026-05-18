@@ -9,7 +9,7 @@
 Set-StrictMode -Off
 $ErrorActionPreference = "Stop"
 
-$ScriptBuild = "0018"
+$ScriptBuild = "0024"
 
 $RepoUrl  = "https://github.com/BruizerMN/asi-qb-middleware.git"
 $RepoPath = "C:\Services\asi-qb-middleware"
@@ -238,8 +238,8 @@ foreach ($line in $lines) {
 Write-Header "Task Scheduler"
 
 $action = New-ScheduledTaskAction `
-    -Execute "py" `
-    -Argument "$RepoPath\app.py" `
+    -Execute "wscript.exe" `
+    -Argument "`"$RepoPath\scripts\start.vbs`"" `
     -WorkingDirectory $RepoPath
 
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
