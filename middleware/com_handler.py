@@ -42,7 +42,7 @@ def _open_session():
     # Flask handles requests on worker threads where this hasn't been done.
     # MTA (COINIT_MULTITHREADED) is required -- STA needs a Windows message
     # pump to deliver cross-process COM responses, which Flask threads don't have.
-    pythoncom.CoInitializeEx(0, pythoncom.COINIT_MULTITHREADED)
+    pythoncom.CoInitializeEx(pythoncom.COINIT_MULTITHREADED)
 
     try:
         rp = win32com.client.Dispatch("QBXMLRP2.RequestProcessor")
