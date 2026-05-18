@@ -165,7 +165,7 @@ if (Test-Path "$RepoPath\.git") {
 Write-Header "Python dependencies"
 
 Write-Step "Running pip install..."
-& python -m pip install --quiet -r "$RepoPath\requirements.txt"
+& py -m pip install --quiet -r "$RepoPath\requirements.txt"
 if ($LASTEXITCODE -ne 0) { Abort "pip install failed." }
 Write-OK "Dependencies installed"
 
@@ -212,7 +212,7 @@ foreach ($line in $lines) {
 Write-Header "Task Scheduler"
 
 $action = New-ScheduledTaskAction `
-    -Execute "python" `
+    -Execute "py" `
     -Argument "$RepoPath\app.py" `
     -WorkingDirectory $RepoPath
 

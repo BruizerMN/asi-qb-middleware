@@ -1,11 +1,10 @@
 """
 ASI QuickBooks Middleware
-Receives invoice jobs from FileMaker, queues them for QuickBooks Web Connector.
+Receives invoice jobs from FileMaker and submits them to QuickBooks via COM/QBFC.
 """
 
-from flask import Flask, request, Response
+from flask import Flask
 import middleware.db as db
-from middleware.wc_soap import handle_soap
 from middleware.fm_routes import bp as fm_bp
 from middleware.config import PORT
 from version import VERSION, BUILD
@@ -16,12 +15,6 @@ def create_app():
 
     db.init_db()
     app.register_blueprint(fm_bp)
-
-    @app.post("/wc")
-    def web_connector():
-        """SOAP endpoint for QuickBooks Web Connector."""
-        result = handle_soap(request.data.decode("utf-8"))
-        return Response(result, content_type="text/xml; charset=utf-8")
 
     @app.get("/health")
     def health():
