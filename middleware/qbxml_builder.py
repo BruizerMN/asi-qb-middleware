@@ -41,6 +41,19 @@ Expected payload structure (all fields are strings unless noted):
 import xml.etree.ElementTree as ET
 
 
+def _ascii_safe(value: str) -> str:
+    """Replace Unicode typographic characters with ASCII equivalents.
+    QB Desktop's XML parser does not support non-ASCII characters."""
+    return (str(value)
+        .replace('“', '"').replace('”', '"')   # curly double quotes
+        .replace('‘', "'").replace('’', "'")   # curly single quotes / apostrophe
+        .replace('–', '-').replace('—', '-')   # en dash, em dash
+        .replace(' ', ' ')                          # non-breaking space
+        .replace('…', '...')                        # ellipsis
+        .encode('ascii', 'replace').decode('ascii')      # replace any remaining non-ASCII with ?
+    )
+
+
 def build_invoice_add(payload: dict) -> str:
     """Return a complete qbXML InvoiceAdd request string."""
     root = ET.Element("QBXML")
@@ -49,7 +62,7 @@ def build_invoice_add(payload: dict) -> str:
     inv = ET.SubElement(req, "InvoiceAdd")
 
     # QB SDK requires strict element order in InvoiceAdd
-    _text(inv, "CustomerRef/FullName", payload["customer_name"])
+    _text(inv, "CustomerRef/FullName", _ascii_safe(payload["customer_name"]))
 
     if payload.get("class_id"):
         _text(inv, "ClassRef/ListID", payload["class_id"])
@@ -57,33 +70,33 @@ def build_invoice_add(payload: dict) -> str:
     _text(inv, "TxnDate", payload["order_date"])
 
     if payload.get("cust_po"):
-        _text(inv, "RefNumber", payload["cust_po"])
+        _text(inv, "RefNumber", _ascii_safe(payload["cust_po"]))
 
     _build_ship_to(inv, payload)
 
     if payload.get("po_number"):
-        _text(inv, "PONumber", payload["po_number"])
+        _text(inv, "PONumber", _ascii_safe(payload["po_number"]))
 
     if payload.get("salesperson"):
-        _text(inv, "SalesRepRef/FullName", payload["salesperson"])
+        _text(inv, "SalesRepRef/FullName", _ascii_safe(payload["salesperson"]))
 
     if payload.get("ship_date"):
         _text(inv, "ShipDate", payload["ship_date"])
 
     if payload.get("ship_via"):
-        _text(inv, "ShipMethodRef/FullName", payload["ship_via"])
+        _text(inv, "ShipMethodRef/FullName", _ascii_safe(payload["ship_via"]))
 
     if payload.get("memo"):
-        _text(inv, "Memo", payload["memo"])
+        _text(inv, "Memo", _ascii_safe(payload["memo"]))
 
     # Line items (skip any marked exclude=True)
     for item in payload.get("line_items", []):
         if item.get("exclude"):
             continue
         li = ET.SubElement(inv, "InvoiceLineAdd")
-        _text(li, "ItemRef/FullName", item["item_name"])
+        _text(li, "ItemRef/FullName", _ascii_safe(item["item_name"]))
         if item.get("description"):
-            _text(li, "Desc", item["description"])
+            _text(li, "Desc", _ascii_safe(item["description"]))
         _text(li, "Quantity", str(item["quantity"]))
         _text(li, "Rate", str(item["unit_price"]))
 
@@ -130,14 +143,14 @@ def _build_ship_to(parent: ET.Element, payload: dict):
     if not payload.get("ship_to_name"):
         return
     addr = ET.SubElement(parent, "ShipAddress")
-    _text(addr, "Addr1", payload.get("ship_to_name", ""))
+    _text(addr, "Addr1", _ascii_safe(payload.get("ship_to_name", "")))
     if payload.get("ship_to_addr1"):
-        _text(addr, "Addr2", payload["ship_to_addr1"])
+        _text(addr, "Addr2", _ascii_safe(payload["ship_to_addr1"]))
     if payload.get("ship_to_addr2"):
-        _text(addr, "Addr3", payload["ship_to_addr2"])
-    _text(addr, "City", payload.get("ship_to_city", ""))
-    _text(addr, "State", payload.get("ship_to_state", ""))
-    _text(addr, "PostalCode", payload.get("ship_to_zip", ""))
+        _text(addr, "Addr3", _ascii_safe(payload["ship_to_addr2"]))
+    _text(addr, "City", _ascii_safe(payload.get("ship_to_city", "")))
+    _text(addr, "State", _ascii_safe(payload.get("ship_to_state", "")))
+    _text(addr, "PostalCode", _ascii_safe(payload.get("ship_to_zip", "")))
 
 
 def _text(parent: ET.Element, path: str, value: str):
