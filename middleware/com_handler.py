@@ -151,13 +151,18 @@ def submit_invoice(qbxml: str, expected_slug: str) -> str:
         info = _get_company_info(rp, ticket)
         verify_company(info, expected_slug)
 
+        # Log the qbxml being sent — before ProcessRequest so we capture it even on error
+        import os
+        log_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "qb_last_request.xml"))
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(qbxml)
+
         # Submit the invoice
         response = rp.ProcessRequest(ticket, qbxml)
 
-        # Log raw QB response for debugging
-        import os
-        log_path = os.path.join(os.path.dirname(__file__), "..", "qb_last_response.xml")
-        with open(os.path.normpath(log_path), "w", encoding="utf-8") as f:
+        # Log raw QB response
+        log_path2 = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "qb_last_response.xml"))
+        with open(log_path2, "w", encoding="utf-8") as f:
             f.write(response)
 
         # Parse the invoice number from the response
