@@ -38,7 +38,7 @@ def _open_session():
         )
 
     try:
-        rp = win32com.client.Dispatch("QBXMLRP2.RequestProcessor2")
+        rp = win32com.client.Dispatch("QBXMLRP2.RequestProcessor")
     except Exception as e:
         raise RuntimeError(
             "Could not connect to QuickBooks. Make sure QuickBooks Desktop "
