@@ -102,6 +102,31 @@ def _get_company_info(rp, ticket) -> dict:
     }
 
 
+def verify_company(info: dict, expected_slug: str):
+    """
+    Raise RuntimeError if the open company doesn't match expected_slug.
+    Pass the dict returned by get_open_company() or _get_company_info().
+    """
+    expected_file = QB_COMPANY_FILES.get(expected_slug, "")
+
+    if not expected_file:
+        raise RuntimeError(
+            f"No QB company file configured for '{expected_slug}'. "
+            "Check QB_FILE_ACOUSTICAL / QB_FILE_ARCHITECTURAL in .env."
+        )
+
+    expected_name = _expected_company_name(expected_file)
+    actual_name   = info["name"].strip().lower()
+
+    if actual_name != expected_name:
+        raise RuntimeError(
+            f"Wrong QuickBooks company file is open. "
+            f"This invoice requires '{expected_file}', "
+            f"but '{info['name']}' is currently open. "
+            f"Please switch QuickBooks to the correct company file and try again."
+        )
+
+
 def get_open_company() -> dict:
     """
     Returns {'name': '...', 'file': '...'} for the currently open QB company.
@@ -123,27 +148,8 @@ def submit_invoice(qbxml: str, expected_slug: str) -> str:
     rp, ticket = _open_session()
     try:
         # Verify the correct company file is open before submitting.
-        # QB's CompanyQueryRq returns the company name but not always the file
-        # path, so we derive the expected name from the configured file path.
         info = _get_company_info(rp, ticket)
-        expected_file = QB_COMPANY_FILES.get(expected_slug, "")
-
-        if not expected_file:
-            raise RuntimeError(
-                f"No QB company file configured for '{expected_slug}'. "
-                "Check QB_FILE_ACOUSTICAL / QB_FILE_ARCHITECTURAL in .env."
-            )
-
-        expected_name = _expected_company_name(expected_file)
-        actual_name   = info["name"].strip().lower()
-
-        if actual_name != expected_name:
-            raise RuntimeError(
-                f"Wrong QuickBooks company file is open. "
-                f"This invoice requires '{expected_file}', "
-                f"but '{info['name']}' is currently open. "
-                f"Please switch QuickBooks to the correct company file and try again."
-            )
+        verify_company(info, expected_slug)
 
         # Submit the invoice
         response = rp.ProcessRequest(ticket, qbxml)

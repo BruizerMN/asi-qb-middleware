@@ -77,14 +77,25 @@ def post_invoice():
 @require_api_key
 def ping():
     """
-    Verify QB is running and return which company file is open.
+    Verify QB is running and that the correct company file is open.
+
+    Optional field:
+        company — "acoustical" or "architectural". If provided, verifies
+                  the open company file matches before returning ok.
 
     Returns:
         {"status": "ok",    "company_name": "...", "company_file": "..."}
         {"status": "error", "error": "..."}
     """
+    data    = request.get_json(force=True, silent=True) or {}
+    company = data.get("company", "").lower()
+
     try:
         info = com.get_open_company()
+
+        if company in ("acoustical", "architectural"):
+            com.verify_company(info, company)
+
         return jsonify({
             "status": "ok",
             "company_name": info["name"],
