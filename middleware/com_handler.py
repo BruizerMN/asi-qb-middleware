@@ -155,9 +155,9 @@ def submit_invoice(qbxml: str, expected_slug: str) -> str:
         response = rp.ProcessRequest(ticket, qbxml)
 
         # Log raw QB response for debugging
-        import tempfile, os
-        log_path = os.path.join(tempfile.gettempdir(), "qb_last_response.xml")
-        with open(log_path, "w", encoding="utf-8") as f:
+        import os
+        log_path = os.path.join(os.path.dirname(__file__), "..", "qb_last_response.xml")
+        with open(os.path.normpath(log_path), "w", encoding="utf-8") as f:
             f.write(response)
 
         # Parse the invoice number from the response
