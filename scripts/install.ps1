@@ -58,7 +58,7 @@ function Install-ViaWinget($id, $label) {
 }
 
 function Install-ViaDownload($url, $label, $silentArgs) {
-    $installer = "$env:TEMP\asi-installer-$([System.IO.Path]::GetFileName($url))"
+    $installer = "$env:TEMP\asi-installer-$([System.Guid]::NewGuid().ToString('N'))-$([System.IO.Path]::GetFileName($url))"
     Write-Step "Downloading $label installer..."
     try {
         Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
