@@ -68,7 +68,7 @@ def _open_session():
         except Exception:
             pass
         raise RuntimeError(
-            "QuickBooks is running but no company file is open. "
+            "No QuickBooks company file is open. "
             "Please open the correct company file and try again."
         )
 

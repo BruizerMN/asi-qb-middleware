@@ -10,7 +10,9 @@ Expected payload structure (all fields are strings unless noted):
     "order_id": "12345",
     "order_date": "2026-05-05",       # YYYY-MM-DD
     "ship_date": "2026-05-10",        # YYYY-MM-DD, optional
-    "cust_po": "PO-9876",             # optional
+    "cust_po": "PO-9876",             # optional — QB RefNumber (Ref No. / Invoice #)
+    "po_number": "ORD-12345",         # optional — QB PONumber (P.O. No. field); use FM OrderID
+    "class_id": "80000001-1234567",   # optional — QB Class ListID for segment reporting
     "ship_via": "UPS Ground",         # optional
     "ship_to_name": "Acme Corp",
     "ship_to_addr1": "123 Main St",
@@ -51,6 +53,12 @@ def build_invoice_add(payload: dict) -> str:
 
     if payload.get("cust_po"):
         _text(inv, "RefNumber", payload["cust_po"])
+
+    if payload.get("po_number"):
+        _text(inv, "PONumber", payload["po_number"])
+
+    if payload.get("class_id"):
+        _text(inv, "ClassRef/ListID", payload["class_id"])
 
     if payload.get("ship_via"):
         _text(inv, "ShipMethodRef/FullName", payload["ship_via"])
