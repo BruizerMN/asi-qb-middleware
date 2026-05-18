@@ -1,13 +1,10 @@
-# ASI QuickBooks Middleware — Workstation Installer
-#
-# Direct download (run from any PowerShell prompt):
-#   powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/BruizerMN/asi-qb-middleware/main/scripts/install.ps1 | iex"
+# ASI QuickBooks Middleware -- Workstation Installer
 #
 # USB / network share:
-#   Right-click → Run with PowerShell
+#   Right-click this file and choose "Run with PowerShell"
 #   (or: powershell -ExecutionPolicy Bypass -File .\install.ps1)
 #
-# Safe to re-run — updates repo, dependencies, and task registration in place.
+# Safe to re-run -- updates repo, dependencies, and task registration in place.
 
 Set-StrictMode -Off
 $ErrorActionPreference = "Stop"
@@ -16,7 +13,9 @@ $RepoUrl  = "https://github.com/BruizerMN/asi-qb-middleware.git"
 $RepoPath = "C:\Services\asi-qb-middleware"
 $TaskName = "ASI QB Middleware"
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 function Write-Header($text) {
     Write-Host ""
@@ -24,17 +23,9 @@ function Write-Header($text) {
     Write-Host ("-" * $text.Length) -ForegroundColor Cyan
 }
 
-function Write-Step($text) {
-    Write-Host "  → $text" -ForegroundColor Yellow
-}
-
-function Write-OK($text) {
-    Write-Host "  ✓ $text" -ForegroundColor Green
-}
-
-function Write-Warn($text) {
-    Write-Host "  ⚠ $text" -ForegroundColor Yellow
-}
+function Write-Step($text)  { Write-Host "  -> $text" -ForegroundColor Yellow }
+function Write-OK($text)    { Write-Host "  OK $text" -ForegroundColor Green  }
+function Write-Warn($text)  { Write-Host "  !! $text" -ForegroundColor Yellow }
 
 function Abort($text) {
     Write-Host ""
@@ -48,20 +39,24 @@ function Abort($text) {
 function Refresh-Path {
     $machine = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
     $user    = [System.Environment]::GetEnvironmentVariable("Path", "User")
-    $env:Path = "$machine;$user"
+    $env:Path = $machine + ";" + $user
 }
 
 function Command-Exists($cmd) {
     return [bool](Get-Command $cmd -ErrorAction SilentlyContinue)
 }
 
-# ── Banner ────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Banner
+# ---------------------------------------------------------------------------
 
 Write-Host ""
-Write-Host "  ASI QuickBooks Middleware — Workstation Installer" -ForegroundColor Cyan
+Write-Host "  ASI QuickBooks Middleware -- Workstation Installer" -ForegroundColor Cyan
 Write-Host "  ===================================================" -ForegroundColor Cyan
 
-# ── Check winget ──────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Check winget
+# ---------------------------------------------------------------------------
 
 Write-Header "Checking prerequisites"
 
@@ -70,7 +65,9 @@ if (-not (Command-Exists "winget")) {
 }
 Write-OK "winget available"
 
-# ── Install Python ────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Install Python
+# ---------------------------------------------------------------------------
 
 if (Command-Exists "python") {
     $pyver = & python --version 2>&1
@@ -81,13 +78,15 @@ if (Command-Exists "python") {
     if ($LASTEXITCODE -ne 0) { Abort "Python install failed (winget exit $LASTEXITCODE)." }
     Refresh-Path
     if (-not (Command-Exists "python")) {
-        Abort "Python installed but still not found on PATH. Close this window, reopen PowerShell, and re-run the installer."
+        Abort "Python installed but not yet on PATH. Close this window, reopen PowerShell, and re-run the installer."
     }
     $pyver = & python --version 2>&1
     Write-OK "Python installed ($pyver)"
 }
 
-# ── Install Git ───────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Install Git
+# ---------------------------------------------------------------------------
 
 if (Command-Exists "git") {
     $gitver = & git --version 2>&1
@@ -98,13 +97,15 @@ if (Command-Exists "git") {
     if ($LASTEXITCODE -ne 0) { Abort "Git install failed (winget exit $LASTEXITCODE)." }
     Refresh-Path
     if (-not (Command-Exists "git")) {
-        Abort "Git installed but still not found on PATH. Close this window, reopen PowerShell, and re-run the installer."
+        Abort "Git installed but not yet on PATH. Close this window, reopen PowerShell, and re-run the installer."
     }
     $gitver = & git --version 2>&1
     Write-OK "Git installed ($gitver)"
 }
 
-# ── Clone or update repo ──────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Clone or update repo
+# ---------------------------------------------------------------------------
 
 Write-Header "Middleware code"
 
@@ -123,7 +124,9 @@ if (Test-Path "$RepoPath\.git") {
     Write-OK "Repo cloned"
 }
 
-# ── Install Python dependencies ───────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Python dependencies
+# ---------------------------------------------------------------------------
 
 Write-Header "Python dependencies"
 
@@ -132,14 +135,16 @@ Write-Step "Running pip install..."
 if ($LASTEXITCODE -ne 0) { Abort "pip install failed." }
 Write-OK "Dependencies installed"
 
-# ── Create .env if missing ────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Create .env if missing
+# ---------------------------------------------------------------------------
 
 $EnvFile = "$RepoPath\.env"
 
 Write-Header "Configuration"
 
 if (Test-Path $EnvFile) {
-    Write-OK ".env already exists — skipping"
+    Write-OK ".env already exists -- skipping"
 } else {
     Write-Host ""
     Write-Host "  Enter the API key for this middleware." -ForegroundColor White
@@ -153,33 +158,33 @@ if (Test-Path $EnvFile) {
     $port = Read-Host "  PORT"
     if ([string]::IsNullOrWhiteSpace($port)) { $port = "5100" }
 
-    @"
-API_KEY=$apiKey
-PORT=$port
-"@ | Set-Content $EnvFile -Encoding UTF8
+    $envContent = "API_KEY=" + $apiKey + "`r`nPORT=" + $port + "`r`n"
+    [System.IO.File]::WriteAllText($EnvFile, $envContent, [System.Text.Encoding]::UTF8)
 
     Write-OK ".env created"
 }
 
-# Read port for health check later
+# Read port for health check
 $portVal = "5100"
-$envContent = Get-Content $EnvFile -ErrorAction SilentlyContinue
-foreach ($line in $envContent) {
+$lines = Get-Content $EnvFile -ErrorAction SilentlyContinue
+foreach ($line in $lines) {
     if ($line -match "^PORT=(.+)") { $portVal = $Matches[1].Trim() }
 }
 
-# ── Register Task Scheduler logon task ───────────────────────────────────────
-# Must run as the current user (not SYSTEM/admin) so it shares the user's
-# Windows session — required for COM/QBFC to reach QuickBooks Desktop.
+# ---------------------------------------------------------------------------
+# Task Scheduler
+# ---------------------------------------------------------------------------
+# Must run as the current user (not SYSTEM) so it shares the Windows session
+# with QuickBooks Desktop -- required for COM/QBFC to work.
 
 Write-Header "Task Scheduler"
 
-$action   = New-ScheduledTaskAction `
+$action = New-ScheduledTaskAction `
     -Execute "python" `
     -Argument "$RepoPath\app.py" `
     -WorkingDirectory $RepoPath
 
-$trigger  = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 
 $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Hours 0) `
@@ -207,10 +212,12 @@ if ($existing) {
         -Settings  $settings `
         -Principal $principal `
         -Force | Out-Null
-    Write-OK "Task registered — middleware will start automatically at each logon"
+    Write-OK "Task registered -- middleware will start automatically at each logon"
 }
 
-# ── Start now ─────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Start now
+# ---------------------------------------------------------------------------
 
 Write-Header "Starting middleware"
 
@@ -225,14 +232,16 @@ try {
     Write-Host "      Version : $($resp.version)" -ForegroundColor White
     Write-Host "      Build   : $($resp.build)"   -ForegroundColor White
 } catch {
-    Write-Warn "Health check failed — middleware may still be starting up."
-    Write-Host "    To check manually: Invoke-RestMethod http://localhost:$portVal/health" -ForegroundColor Gray
+    Write-Warn "Health check timed out -- middleware may still be starting."
+    Write-Host "    Check manually: Invoke-RestMethod http://localhost:$portVal/health" -ForegroundColor Gray
 }
 
-# ── Done ──────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Done
+# ---------------------------------------------------------------------------
 
 Write-Host ""
-Write-Host "  All done! The middleware will start automatically each time you log in." -ForegroundColor Cyan
+Write-Host "  All done! The middleware will start automatically at each logon." -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Press any key to exit..."
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
