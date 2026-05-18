@@ -20,12 +20,19 @@ from .qbxml_builder import build_company_query
 APP_NAME = "ASI QB Middleware"
 
 
-def _normalize_path(path: str) -> str:
-    """Lowercase and ensure .qbw extension for comparison."""
-    p = path.strip().lower()
-    if not p.endswith(".qbw"):
-        p += ".qbw"
-    return p
+def _expected_company_name(configured_path: str) -> str:
+    """
+    Derive the expected QB company name from the configured file path.
+    QB returns the company name, not the file path, in CompanyQueryRq.
+    We extract it from the filename: 'Q:\\Test Parent 2.23.QBW' -> 'test parent 2.23'
+    Comparison is case-insensitive.
+    """
+    import os
+    basename = os.path.basename(configured_path.strip())
+    # Strip .qbw extension (case-insensitive)
+    if basename.lower().endswith(".qbw"):
+        basename = basename[:-4]
+    return basename.lower()
 
 
 def _open_session():
@@ -40,29 +47,29 @@ def _open_session():
 
     try:
         rp = win32com.client.Dispatch("QBXMLRP2.RequestProcessor")
-    except Exception as e:
+    except Exception:
         raise RuntimeError(
-            "Could not connect to QuickBooks. Make sure QuickBooks Desktop "
-            f"is running and a company file is open. ({e})"
+            "QuickBooks is not running. Please open QuickBooks and a company file, then try again."
         )
 
     try:
         rp.OpenConnection2("", APP_NAME, 1)
     except Exception as e:
-        raise RuntimeError(f"Could not open QB connection: {e}")
+        raise RuntimeError(
+            f"QuickBooks refused the connection. Make sure QuickBooks is open and try again. ({e})"
+        )
 
     try:
         # "" = currently open file, 2 = omDontCare (single or multi-user)
         ticket = rp.BeginSession("", 2)
-    except Exception as e:
+    except Exception:
         try:
             rp.CloseConnection()
         except Exception:
             pass
-
         raise RuntimeError(
-            "Could not begin QB session. Make sure a company file is open "
-            f"in QuickBooks. ({e})"
+            "QuickBooks is running but no company file is open. "
+            "Please open the correct company file and try again."
         )
 
     return rp, ticket
@@ -115,7 +122,9 @@ def submit_invoice(qbxml: str, expected_slug: str) -> str:
     """
     rp, ticket = _open_session()
     try:
-        # Verify the correct company file is open before submitting
+        # Verify the correct company file is open before submitting.
+        # QB's CompanyQueryRq returns the company name but not always the file
+        # path, so we derive the expected name from the configured file path.
         info = _get_company_info(rp, ticket)
         expected_file = QB_COMPANY_FILES.get(expected_slug, "")
 
@@ -125,11 +134,14 @@ def submit_invoice(qbxml: str, expected_slug: str) -> str:
                 "Check QB_FILE_ACOUSTICAL / QB_FILE_ARCHITECTURAL in .env."
             )
 
-        if _normalize_path(info["file"]) != _normalize_path(expected_file):
+        expected_name = _expected_company_name(expected_file)
+        actual_name   = info["name"].strip().lower()
+
+        if actual_name != expected_name:
             raise RuntimeError(
                 f"Wrong QuickBooks company file is open. "
-                f"This invoice requires the {expected_slug} company file "
-                f"({expected_file}), but '{info['name']}' is currently open. "
+                f"This invoice requires '{expected_file}', "
+                f"but '{info['name']}' is currently open. "
                 f"Please switch QuickBooks to the correct company file and try again."
             )
 
