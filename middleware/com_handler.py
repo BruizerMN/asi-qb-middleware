@@ -15,7 +15,11 @@ except ImportError:
     _COM_AVAILABLE = False
 
 from .config import QB_COMPANY_FILES
-from .qbxml_builder import build_company_query, build_customer_list_query, build_item_list_query
+from .qbxml_builder import (
+    build_company_query,
+    build_customer_list_query, build_item_list_query,
+    build_item_query_by_name,
+)
 
 APP_NAME = "ASI QB Middleware"
 
@@ -272,5 +276,46 @@ def get_all_items(expected_slug: str) -> list:
             })
         return items
 
+    finally:
+        _close_session(rp, ticket)
+
+
+def get_customer_by_account(account_number: str) -> dict | None:
+    """
+    Return a single customer matching account_number, or None if not found.
+    QB CustomerQueryRq has no AccountNumber filter, so we fetch all and scan.
+    """
+    rp, ticket = _open_session()
+    try:
+        response = rp.ProcessRequest(ticket, build_customer_list_query())
+        root = ET.fromstring(response)
+        target = account_number.strip().lower()
+        for cust in root.findall(".//CustomerRet"):
+            if cust.find("ParentRef") is not None:
+                continue
+            if (cust.findtext("AccountNumber") or "").strip().lower() == target:
+                return {
+                    "list_id":        cust.findtext("ListID") or "",
+                    "full_name":      cust.findtext("FullName") or "",
+                    "account_number": cust.findtext("AccountNumber") or "",
+                }
+        return None
+    finally:
+        _close_session(rp, ticket)
+
+
+def get_item_by_name(item_name: str) -> dict | None:
+    """Return a single non-inventory item matching name, or None if not found."""
+    rp, ticket = _open_session()
+    try:
+        response = rp.ProcessRequest(ticket, build_item_query_by_name(item_name))
+        root = ET.fromstring(response)
+        item = root.find(".//ItemNonInventoryRet")
+        if item is None:
+            return None
+        return {
+            "list_id": item.findtext("ListID") or "",
+            "name":    item.findtext("Name") or "",
+        }
     finally:
         _close_session(rp, ticket)

@@ -186,6 +186,16 @@ def build_item_list_query() -> str:
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 
+def build_item_query_by_name(item_name: str) -> str:
+    """Return an ItemNonInventoryQueryRq filtered to a single item by FullName."""
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "ItemNonInventoryQueryRq", requestID="1")
+    _text(req, "FullName", item_name)
+    _text(req, "OwnerID", "0")
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
 def build_company_query() -> str:
     """Return a qbXML CompanyQueryRq — used to verify QB connectivity."""
     root = ET.Element("QBXML")
