@@ -67,6 +67,26 @@ def _detect_slug(company_name: str) -> str | None:
     return None
 
 
+def detect_open_slug() -> str:
+    """
+    Return the slug for the currently open QB company ("acoustical" or "architectural").
+    Raises RuntimeError if QB is not running, no file is open, or the open file
+    doesn't match any configured company.
+    """
+    rp, ticket = _open_session()
+    try:
+        info = _get_company_info(rp, ticket)
+        slug = _detect_slug(info["name"])
+        if not slug:
+            raise RuntimeError(
+                f"The open QuickBooks company '{info['name']}' is not configured in the middleware. "
+                "Expected the Acoustical Surfaces or Architectural Surfaces company file."
+            )
+        return slug
+    finally:
+        _close_session(rp, ticket)
+
+
 def _expected_company_name(configured_path: str) -> str:
     """
     Derive the expected QB company name from the configured file path.

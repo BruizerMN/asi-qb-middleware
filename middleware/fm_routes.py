@@ -84,18 +84,19 @@ def sync_customers():
     """
     Return all active top-level QB customers for FM to match against its CUSTOMER table.
 
-    Required field:
-        company — "acoustical" or "architectural"
+    Optional field:
+        company — "acoustical" or "architectural". If omitted, auto-detected from
+                  the open QB company file.
 
     Returns:
         {"status": "ok", "count": N, "customers": [{"list_id": "...", "full_name": "...", "account_number": "..."}, ...]}
     """
     data    = request.get_json(force=True, silent=True) or {}
     company = data.get("company", "").lower()
-    if company not in ("acoustical", "architectural"):
-        return jsonify({"status": "error", "error": "company must be 'acoustical' or 'architectural'"}), 400
 
     try:
+        if company not in ("acoustical", "architectural"):
+            company = com.detect_open_slug()
         customers = com.get_all_customers(company)
         return jsonify({"status": "ok", "count": len(customers), "customers": customers})
     except RuntimeError as e:
@@ -110,18 +111,19 @@ def sync_items():
     """
     Return all active QB non-inventory items for FM to match against its PRODUCTS table.
 
-    Required field:
-        company — "acoustical" or "architectural"
+    Optional field:
+        company — "acoustical" or "architectural". If omitted, auto-detected from
+                  the open QB company file.
 
     Returns:
         {"status": "ok", "count": N, "items": [{"list_id": "...", "name": "..."}, ...]}
     """
     data    = request.get_json(force=True, silent=True) or {}
     company = data.get("company", "").lower()
-    if company not in ("acoustical", "architectural"):
-        return jsonify({"status": "error", "error": "company must be 'acoustical' or 'architectural'"}), 400
 
     try:
+        if company not in ("acoustical", "architectural"):
+            company = com.detect_open_slug()
         items = com.get_all_items(company)
         return jsonify({"status": "ok", "count": len(items), "items": items})
     except RuntimeError as e:
