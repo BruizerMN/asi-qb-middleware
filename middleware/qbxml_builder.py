@@ -176,23 +176,37 @@ def build_customer_list_query() -> str:
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 
+# All QB item types ASI uses. Each entry: (QueryRq element name, Ret element name).
+# Used by both build functions and com_handler parsing.
+ITEM_QUERY_TYPES = [
+    ("ItemInventory",         "ItemInventoryRet"),
+    ("ItemInventoryAssembly", "ItemInventoryAssemblyRet"),
+    ("ItemNonInventory",      "ItemNonInventoryRet"),
+    ("ItemService",           "ItemServiceRet"),
+    ("ItemOtherCharge",       "ItemOtherChargeRet"),
+    ("ItemGroup",             "ItemGroupRet"),
+]
+
+
 def build_item_list_query() -> str:
-    """Return an ItemNonInventoryQueryRq for all active items."""
+    """Return a batch query for all active items across all QB item types."""
     root = ET.Element("QBXML")
-    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
-    req = ET.SubElement(msgs, "ItemNonInventoryQueryRq", requestID="1")
-    _text(req, "ActiveStatus", "ActiveOnly")
-    _text(req, "OwnerID", "0")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="continueOnError")
+    for i, (req_type, _) in enumerate(ITEM_QUERY_TYPES, start=1):
+        req = ET.SubElement(msgs, f"{req_type}QueryRq", requestID=str(i))
+        _text(req, "ActiveStatus", "ActiveOnly")
+        _text(req, "OwnerID", "0")
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 
 def build_item_query_by_name(item_name: str) -> str:
-    """Return an ItemNonInventoryQueryRq filtered to a single item by FullName."""
+    """Return a batch query for a single item by FullName across all QB item types."""
     root = ET.Element("QBXML")
-    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
-    req = ET.SubElement(msgs, "ItemNonInventoryQueryRq", requestID="1")
-    _text(req, "FullName", item_name)
-    _text(req, "OwnerID", "0")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="continueOnError")
+    for i, (req_type, _) in enumerate(ITEM_QUERY_TYPES, start=1):
+        req = ET.SubElement(msgs, f"{req_type}QueryRq", requestID=str(i))
+        _text(req, "FullName", item_name)
+        _text(req, "OwnerID", "0")
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 

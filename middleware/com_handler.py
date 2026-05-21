@@ -19,7 +19,7 @@ from .config import QB_COMPANY_FILES
 from .qbxml_builder import (
     build_company_query,
     build_customer_list_query, build_item_list_query,
-    build_item_query_by_name,
+    build_item_query_by_name, ITEM_QUERY_TYPES,
 )
 
 APP_NAME = "ASI QB Middleware"
@@ -311,9 +311,10 @@ def get_all_customers(expected_slug: str) -> list:
 
 def get_all_items(expected_slug: str) -> list:
     """
-    Return all active non-inventory QB items as a list of dicts.
+    Return all active QB items as a list of dicts across all item types.
     Each dict: {list_id, name}.
     name matches FM's productID field (confirmed by Cat).
+    Covers: Inventory, InventoryAssembly, NonInventory, Service, OtherCharge, Group.
     """
     rp, ticket = _open_session()
     try:
@@ -323,23 +324,16 @@ def get_all_items(expected_slug: str) -> list:
         response = rp.ProcessRequest(ticket, build_item_list_query())
         root = ET.fromstring(response)
 
-        rs = root.find(".//ItemNonInventoryQueryRs")
-        if rs is not None:
-            status_code = rs.get("statusCode", "0")
-            if status_code not in ("0", "1"):
-                raise RuntimeError(
-                    f"QB ItemQuery failed: {rs.get('statusMessage')} (code {status_code})"
-                )
-
         items = []
-        for item in root.findall(".//ItemNonInventoryRet"):
-            name = item.findtext("Name") or ""
-            if not name:
-                continue
-            items.append({
-                "list_id": item.findtext("ListID") or "",
-                "name":    name,
-            })
+        for _, ret_type in ITEM_QUERY_TYPES:
+            for item in root.findall(f".//{ret_type}"):
+                name = item.findtext("Name") or ""
+                if not name:
+                    continue
+                items.append({
+                    "list_id": item.findtext("ListID") or "",
+                    "name":    name,
+                })
         return items
 
     finally:
@@ -398,17 +392,21 @@ def get_customer_by_account(account_number: str) -> dict | None:
 
 
 def get_item_by_name(item_name: str) -> dict | None:
-    """Return a single non-inventory item matching name, or None if not found."""
+    """
+    Return a single item matching item_name, or None if not found.
+    Searches across all QB item types (Inventory, NonInventory, Service, etc.).
+    """
     rp, ticket = _open_session()
     try:
         response = rp.ProcessRequest(ticket, build_item_query_by_name(item_name))
         root = ET.fromstring(response)
-        item = root.find(".//ItemNonInventoryRet")
-        if item is None:
-            return None
-        return {
-            "list_id": item.findtext("ListID") or "",
-            "name":    item.findtext("Name") or "",
-        }
+        for _, ret_type in ITEM_QUERY_TYPES:
+            item = root.find(f".//{ret_type}")
+            if item is not None:
+                return {
+                    "list_id": item.findtext("ListID") or "",
+                    "name":    item.findtext("Name") or "",
+                }
+        return None
     finally:
         _close_session(rp, ticket)
