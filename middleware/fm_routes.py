@@ -98,7 +98,8 @@ def sync_customers():
         if company not in ("acoustical", "architectural"):
             company = com.detect_open_slug()
         customers = com.get_all_customers(company)
-        return jsonify({"status": "ok", "count": len(customers), "customers": customers})
+        lookup = {c["account_number"]: {"list_id": c["list_id"], "full_name": c["full_name"]} for c in customers}
+        return jsonify({"status": "ok", "count": len(customers), "lookup": lookup})
     except RuntimeError as e:
         return jsonify({"status": "error", "error": str(e)}), 422
     except Exception as e:
@@ -125,7 +126,8 @@ def sync_items():
         if company not in ("acoustical", "architectural"):
             company = com.detect_open_slug()
         items = com.get_all_items(company)
-        return jsonify({"status": "ok", "count": len(items), "items": items})
+        lookup = {item["name"]: item["list_id"] for item in items}
+        return jsonify({"status": "ok", "count": len(items), "lookup": lookup})
     except RuntimeError as e:
         return jsonify({"status": "error", "error": str(e)}), 422
     except Exception as e:
