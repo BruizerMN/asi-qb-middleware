@@ -166,6 +166,26 @@ def _text(parent: ET.Element, path: str, value: str):
     el.text = value
 
 
+def build_customer_list_query() -> str:
+    """Return a CustomerQueryRq for all active top-level customers (no jobs)."""
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "CustomerQueryRq", requestID="1")
+    _text(req, "ActiveStatus", "ActiveOnly")
+    _text(req, "OwnerID", "0")
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
+def build_item_list_query() -> str:
+    """Return an ItemNonInventoryQueryRq for all active items."""
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "ItemNonInventoryQueryRq", requestID="1")
+    _text(req, "ActiveStatus", "ActiveOnly")
+    _text(req, "OwnerID", "0")
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
 def build_company_query() -> str:
     """Return a qbXML CompanyQueryRq — used to verify QB connectivity."""
     root = ET.Element("QBXML")

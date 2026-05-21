@@ -15,7 +15,7 @@ except ImportError:
     _COM_AVAILABLE = False
 
 from .config import QB_COMPANY_FILES
-from .qbxml_builder import build_company_query
+from .qbxml_builder import build_company_query, build_customer_list_query, build_item_list_query
 
 APP_NAME = "ASI QB Middleware"
 
@@ -193,6 +193,84 @@ def submit_invoice(qbxml: str, expected_slug: str) -> str:
             )
 
         return invoice_number
+
+    finally:
+        _close_session(rp, ticket)
+
+
+def get_all_customers(expected_slug: str) -> list:
+    """
+    Return all active top-level QB customers as a list of dicts.
+    Each dict: {list_id, full_name, account_number}.
+    Sub-customers (jobs) are excluded — they have a ParentRef element.
+    Customers without an AccountNumber are excluded (can't match to FM).
+    """
+    rp, ticket = _open_session()
+    try:
+        info = _get_company_info(rp, ticket)
+        verify_company(info, expected_slug)
+
+        response = rp.ProcessRequest(ticket, build_customer_list_query())
+        root = ET.fromstring(response)
+
+        rs = root.find(".//CustomerQueryRs")
+        if rs is not None:
+            status_code = rs.get("statusCode", "0")
+            if status_code not in ("0", "1"):
+                raise RuntimeError(
+                    f"QB CustomerQuery failed: {rs.get('statusMessage')} (code {status_code})"
+                )
+
+        customers = []
+        for cust in root.findall(".//CustomerRet"):
+            if cust.find("ParentRef") is not None:
+                continue
+            account_number = cust.findtext("AccountNumber") or ""
+            if not account_number:
+                continue
+            customers.append({
+                "list_id":        cust.findtext("ListID") or "",
+                "full_name":      cust.findtext("FullName") or "",
+                "account_number": account_number,
+            })
+        return customers
+
+    finally:
+        _close_session(rp, ticket)
+
+
+def get_all_items(expected_slug: str) -> list:
+    """
+    Return all active non-inventory QB items as a list of dicts.
+    Each dict: {list_id, name}.
+    name matches FM's productID field (confirmed by Cat).
+    """
+    rp, ticket = _open_session()
+    try:
+        info = _get_company_info(rp, ticket)
+        verify_company(info, expected_slug)
+
+        response = rp.ProcessRequest(ticket, build_item_list_query())
+        root = ET.fromstring(response)
+
+        rs = root.find(".//ItemNonInventoryQueryRs")
+        if rs is not None:
+            status_code = rs.get("statusCode", "0")
+            if status_code not in ("0", "1"):
+                raise RuntimeError(
+                    f"QB ItemQuery failed: {rs.get('statusMessage')} (code {status_code})"
+                )
+
+        items = []
+        for item in root.findall(".//ItemNonInventoryRet"):
+            name = item.findtext("Name") or ""
+            if not name:
+                continue
+            items.append({
+                "list_id": item.findtext("ListID") or "",
+                "name":    name,
+            })
+        return items
 
     finally:
         _close_session(rp, ticket)

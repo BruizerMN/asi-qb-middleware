@@ -5,9 +5,11 @@ FileMaker uses Insert from URL to call these. All requests must include:
     X-API-Key: <shared secret from .env>
 
 Endpoints:
-    POST /fm/invoice       — submit an invoice to QuickBooks (synchronous via COM)
-    POST /fm/ping          — verify QB is running and check which company is open
-    POST /fm/debug-invoice — return generated qbXML without submitting (dev only)
+    POST /fm/invoice        — submit an invoice to QuickBooks (synchronous via COM)
+    POST /fm/ping           — verify QB is running and check which company is open
+    POST /fm/sync-customers — return all active QB customers for FM to match and store
+    POST /fm/sync-items     — return all active QB items for FM to match and store
+    POST /fm/debug-invoice  — return generated qbXML without submitting (dev only)
 """
 
 from functools import wraps
@@ -68,6 +70,58 @@ def post_invoice():
             "qb_invoice_id": qb_invoice_id,
             "order_id": str(order_id),
         })
+    except RuntimeError as e:
+        return jsonify({"status": "error", "error": str(e)}), 422
+    except Exception as e:
+        return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+
+
+@bp.post("/sync-customers")
+@require_api_key
+def sync_customers():
+    """
+    Return all active top-level QB customers for FM to match against its CUSTOMER table.
+
+    Required field:
+        company — "acoustical" or "architectural"
+
+    Returns:
+        {"status": "ok", "count": N, "customers": [{"list_id": "...", "full_name": "...", "account_number": "..."}, ...]}
+    """
+    data    = request.get_json(force=True, silent=True) or {}
+    company = data.get("company", "").lower()
+    if company not in ("acoustical", "architectural"):
+        return jsonify({"status": "error", "error": "company must be 'acoustical' or 'architectural'"}), 400
+
+    try:
+        customers = com.get_all_customers(company)
+        return jsonify({"status": "ok", "count": len(customers), "customers": customers})
+    except RuntimeError as e:
+        return jsonify({"status": "error", "error": str(e)}), 422
+    except Exception as e:
+        return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+
+
+@bp.post("/sync-items")
+@require_api_key
+def sync_items():
+    """
+    Return all active QB non-inventory items for FM to match against its PRODUCTS table.
+
+    Required field:
+        company — "acoustical" or "architectural"
+
+    Returns:
+        {"status": "ok", "count": N, "items": [{"list_id": "...", "name": "..."}, ...]}
+    """
+    data    = request.get_json(force=True, silent=True) or {}
+    company = data.get("company", "").lower()
+    if company not in ("acoustical", "architectural"):
+        return jsonify({"status": "error", "error": "company must be 'acoustical' or 'architectural'"}), 400
+
+    try:
+        items = com.get_all_items(company)
+        return jsonify({"status": "ok", "count": len(items), "items": items})
     except RuntimeError as e:
         return jsonify({"status": "error", "error": str(e)}), 422
     except Exception as e:
