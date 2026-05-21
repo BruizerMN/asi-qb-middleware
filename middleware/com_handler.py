@@ -5,6 +5,7 @@ Sends qbXML requests directly to the open QB company file via win32com.
 This module only works on Windows with QuickBooks Desktop installed.
 """
 
+import time
 import xml.etree.ElementTree as ET
 
 try:
@@ -22,6 +23,48 @@ from .qbxml_builder import (
 )
 
 APP_NAME = "ASI QB Middleware"
+
+# ---------------------------------------------------------------------------
+# Customer list cache
+# Keyed by company slug. Avoids a full QB CustomerQueryRq on every individual
+# sync — QB has no AccountNumber filter, so without this every lookup fetches
+# all customers (~20 s). The All sync always repopulates; individual syncs
+# reuse the cache for up to _CACHE_TTL seconds.
+# ---------------------------------------------------------------------------
+_CACHE_TTL = 1800  # 30 minutes
+
+# { slug: {"customers": [...], "by_account": {lower_acct_no: dict}, "ts": float} }
+_customer_cache: dict = {}
+
+
+def _customer_cache_populate(slug: str, customers: list) -> None:
+    """Store a customer list in the cache, indexed by lower-cased account_number."""
+    _customer_cache[slug] = {
+        "customers":  customers,
+        "by_account": {c["account_number"].strip().lower(): c for c in customers},
+        "ts":         time.time(),
+    }
+
+
+def _customer_cache_lookup(slug: str, account_number: str) -> tuple:
+    """
+    Return (hit, customer_or_None).
+    hit=True  — cache was valid; customer_or_None is the result (may be None = not found).
+    hit=False — cache stale/missing; caller should fetch from QB.
+    """
+    entry = _customer_cache.get(slug)
+    if entry and (time.time() - entry["ts"]) < _CACHE_TTL:
+        return True, entry["by_account"].get(account_number.strip().lower())
+    return False, None
+
+
+def _detect_slug(company_name: str) -> str | None:
+    """Map an open QB company display name back to its configured slug."""
+    name_lower = company_name.strip().lower()
+    for slug, path in QB_COMPANY_FILES.items():
+        if _expected_company_name(path) == name_lower:
+            return slug
+    return None
 
 
 def _expected_company_name(configured_path: str) -> str:
@@ -237,6 +280,9 @@ def get_all_customers(expected_slug: str) -> list:
                 "full_name":      cust.findtext("FullName") or "",
                 "account_number": account_number,
             })
+
+        # Warm the cache so subsequent individual lookups skip the QB fetch.
+        _customer_cache_populate(expected_slug, customers)
         return customers
 
     finally:
@@ -283,23 +329,50 @@ def get_all_items(expected_slug: str) -> list:
 def get_customer_by_account(account_number: str) -> dict | None:
     """
     Return a single customer matching account_number, or None if not found.
-    QB CustomerQueryRq has no AccountNumber filter, so we fetch all and scan.
+
+    QB CustomerQueryRq has no AccountNumber filter, so a full fetch is needed
+    when the cache is cold. On a cache hit (within _CACHE_TTL), the QB fetch is
+    skipped entirely — only a cheap CompanyQueryRq is made to detect the slug.
     """
     rp, ticket = _open_session()
     try:
+        # Detect which company file is open so we can key the cache correctly.
+        info = _get_company_info(rp, ticket)
+        slug = _detect_slug(info["name"])
+
+        # Cache hit — no customer list query needed.
+        if slug:
+            hit, customer = _customer_cache_lookup(slug, account_number)
+            if hit:
+                return customer
+
+        # Cache miss — fetch all customers, populate cache, return match.
         response = rp.ProcessRequest(ticket, build_customer_list_query())
         root = ET.fromstring(response)
         target = account_number.strip().lower()
+
+        customers = []
+        result = None
         for cust in root.findall(".//CustomerRet"):
             if cust.find("ParentRef") is not None:
                 continue
-            if (cust.findtext("AccountNumber") or "").strip().lower() == target:
-                return {
-                    "list_id":        cust.findtext("ListID") or "",
-                    "full_name":      cust.findtext("FullName") or "",
-                    "account_number": cust.findtext("AccountNumber") or "",
-                }
-        return None
+            acct = cust.findtext("AccountNumber") or ""
+            if not acct:
+                continue
+            c = {
+                "list_id":        cust.findtext("ListID") or "",
+                "full_name":      cust.findtext("FullName") or "",
+                "account_number": acct,
+            }
+            customers.append(c)
+            if acct.strip().lower() == target:
+                result = c
+
+        if slug:
+            _customer_cache_populate(slug, customers)
+
+        return result
+
     finally:
         _close_session(rp, ticket)
 
