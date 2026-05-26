@@ -295,7 +295,8 @@ def _render_invoice_html(inv: dict) -> str:
   <title>Invoice #{h(inv['ref_number'])}</title>
   <style>
     *{{box-sizing:border-box;margin:0;padding:0}}
-    body{{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#333;background:#fff;padding:24px 28px}}
+    body{{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#333;background:#f0f0f0;padding:24px 28px}}
+    .page{{max-width:1060px;margin:0 auto;background:#fff;padding:24px 28px;box-shadow:0 1px 4px rgba(0,0,0,.15)}}
     .inv-title{{font-size:34px;font-weight:bold;color:#111;line-height:1}}
     .hdr{{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px}}
     .hdr-right{{display:flex;gap:14px}}
@@ -325,6 +326,7 @@ def _render_invoice_html(inv: dict) -> str:
   </style>
 </head>
 <body>
+<div class="page">
 
 <div class="hdr">
   <div class="inv-title">Invoice</div>
@@ -379,6 +381,7 @@ def _render_invoice_html(inv: dict) -> str:
 </div>
 
 {memo_html}
+</div>
 </body>
 </html>"""
 
