@@ -72,7 +72,7 @@ def build_invoice_add(payload: dict) -> str:
     _text(inv, "CustomerRef/FullName", _ascii_safe(payload["customer_name"]))
 
     if payload.get("class_id"):
-        _text(inv, "ClassRef/ListID", payload["class_id"])
+        _text(inv, "ClassRef/FullName", payload["class_id"])
 
     _text(inv, "TxnDate", payload["order_date"])
 
