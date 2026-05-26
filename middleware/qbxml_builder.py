@@ -25,6 +25,13 @@ Expected payload structure (all fields are strings unless noted):
     "amount_paid": "557.50",
     "payment_method": "Visa",         # optional
     "salesperson": "Jane Smith",      # optional
+    "bill_to_name":  "Acme Corp",       # optional — billing address
+    "bill_to_addr1": "123 Main St",
+    "bill_to_addr2": "",
+    "bill_to_city":  "Minneapolis",
+    "bill_to_state": "MN",
+    "bill_to_zip":   "55401",
+    "terms":     "Net 30",             # optional — must match QB Terms list exactly
     "memo": "PP Note text",           # optional
     "line_items": [
         {
@@ -72,10 +79,14 @@ def build_invoice_add(payload: dict) -> str:
     if payload.get("cust_po"):
         _text(inv, "RefNumber", _ascii_safe(payload["cust_po"]))
 
+    _build_bill_to(inv, payload)
     _build_ship_to(inv, payload)
 
     if payload.get("po_number"):
         _text(inv, "PONumber", _ascii_safe(payload["po_number"]))
+
+    if payload.get("terms"):
+        _text(inv, "TermsRef/FullName", _ascii_safe(payload["terms"]))
 
     if payload.get("salesperson"):
         _text(inv, "SalesRepRef/FullName", _ascii_safe(payload["salesperson"]))
@@ -149,6 +160,20 @@ def build_item_query(item_name: str) -> str:
     req = ET.SubElement(msgs, "ItemNonInventoryQueryRq", requestID="1")
     _text(req, "FullName", item_name)
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
+def _build_bill_to(parent: ET.Element, payload: dict):
+    if not payload.get("bill_to_name"):
+        return
+    addr = ET.SubElement(parent, "BillAddress")
+    _text(addr, "Addr1", _ascii_safe(payload.get("bill_to_name", ""))[:41])
+    if payload.get("bill_to_addr1"):
+        _text(addr, "Addr2", _ascii_safe(payload["bill_to_addr1"])[:41])
+    if payload.get("bill_to_addr2"):
+        _text(addr, "Addr3", _ascii_safe(payload["bill_to_addr2"])[:41])
+    _text(addr, "City",       _ascii_safe(payload.get("bill_to_city",  ""))[:31])
+    _text(addr, "State",      _ascii_safe(payload.get("bill_to_state", ""))[:21])
+    _text(addr, "PostalCode", _ascii_safe(payload.get("bill_to_zip",   ""))[:13])
 
 
 def _build_ship_to(parent: ET.Element, payload: dict):
