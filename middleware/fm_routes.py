@@ -214,6 +214,19 @@ def debug_invoice():
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
+@bp.post("/list-ship-methods")
+@require_api_key
+def list_ship_methods():
+    """Return all active QB shipping methods."""
+    try:
+        methods = com.get_all_ship_methods()
+        return jsonify({"status": "ok", "count": len(methods), "ship_methods": methods})
+    except RuntimeError as e:
+        return jsonify({"status": "error", "error": str(e)}), 422
+    except Exception as e:
+        return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+
+
 @bp.post("/list-terms")
 @require_api_key
 def list_terms():

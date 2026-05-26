@@ -20,7 +20,7 @@ from .qbxml_builder import (
     build_company_query,
     build_customer_query, build_customer_add_job,
     build_customer_list_query, build_item_list_query,
-    build_item_query_by_name, build_terms_query, ITEM_QUERY_TYPES,
+    build_item_query_by_name, build_terms_query, build_ship_method_query, ITEM_QUERY_TYPES,
 )
 
 APP_NAME = "ASI QB Middleware"
@@ -443,6 +443,20 @@ def get_customer_by_account(account_number: str) -> dict | None:
 
         return result
 
+    finally:
+        _close_session(rp, ticket)
+
+
+def get_all_ship_methods() -> list:
+    """Return all active QB shipping methods as a list of {name} dicts."""
+    rp, ticket = _open_session()
+    try:
+        response = rp.ProcessRequest(ticket, build_ship_method_query())
+        root = ET.fromstring(response)
+        return [
+            {"name": m.findtext("Name") or ""}
+            for m in root.findall(".//ShipMethodRet")
+        ]
     finally:
         _close_session(rp, ticket)
 

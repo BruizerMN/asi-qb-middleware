@@ -244,6 +244,15 @@ def build_item_query_by_name(item_name: str) -> str:
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 
+def build_ship_method_query() -> str:
+    """Return a ShipMethodQueryRq for all active shipping methods."""
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "ShipMethodQueryRq", requestID="1")
+    _text(req, "ActiveStatus", "ActiveOnly")
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
 def build_terms_query() -> str:
     """Return a TermsQueryRq for all active payment terms."""
     root = ET.Element("QBXML")
