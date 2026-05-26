@@ -1,2 +1,2 @@
-VERSION = "1.0.4"
-BUILD = "0046"
+VERSION = "1.0.5"
+BUILD = "0047"

@@ -18,6 +18,7 @@ except ImportError:
 from .config import QB_COMPANY_FILES
 from .qbxml_builder import (
     build_company_query,
+    build_customer_query, build_customer_add_job,
     build_customer_list_query, build_item_list_query,
     build_item_query_by_name, ITEM_QUERY_TYPES,
 )
@@ -202,6 +203,61 @@ def get_open_company() -> dict:
     rp, ticket = _open_session()
     try:
         return _get_company_info(rp, ticket)
+    finally:
+        _close_session(rp, ticket)
+
+
+def ensure_customer_job(customer_job_fullname: str, expected_slug: str) -> None:
+    """
+    Ensure a Customer:Job (sub-customer) exists in QB. Creates it if missing.
+
+    customer_job_fullname is "CustomerFullName:JobName" as sent in the invoice payload.
+    If there is no colon, the name is a top-level customer and no action is needed.
+
+    Raises RuntimeError if the parent customer is not in QB or job creation fails.
+    """
+    if ":" not in customer_job_fullname:
+        return
+
+    rp, ticket = _open_session()
+    try:
+        info = _get_company_info(rp, ticket)
+        verify_company(info, expected_slug)
+
+        # Check whether the job already exists.
+        resp = rp.ProcessRequest(ticket, build_customer_query(customer_job_fullname))
+        root = ET.fromstring(resp)
+        if root.find(".//CustomerRet") is not None:
+            return  # job already in QB, nothing to do
+
+        # Job is missing — look up parent customer to get their ListID.
+        parent_fullname, job_name = customer_job_fullname.split(":", 1)
+        resp = rp.ProcessRequest(ticket, build_customer_query(parent_fullname))
+        root = ET.fromstring(resp)
+        parent_ret = root.find(".//CustomerRet")
+        if parent_ret is None:
+            raise RuntimeError(
+                f"Customer '{parent_fullname}' was not found in QuickBooks. "
+                "Run QB - Sync Customers to link this customer, then try again."
+            )
+        parent_list_id = parent_ret.findtext("ListID") or ""
+        if not parent_list_id:
+            raise RuntimeError(
+                f"Could not retrieve the QuickBooks ListID for customer '{parent_fullname}'."
+            )
+
+        # Create the job under the parent.
+        resp = rp.ProcessRequest(ticket, build_customer_add_job(parent_list_id, job_name))
+        root = ET.fromstring(resp)
+        rs = root.find(".//CustomerAddRs")
+        if rs is not None:
+            code = rs.get("statusCode", "0")
+            if code != "0":
+                msg = rs.get("statusMessage", "Unknown error")
+                raise RuntimeError(
+                    f"QuickBooks rejected job creation for '{job_name}': {msg} (code {code})"
+                )
+
     finally:
         _close_session(rp, ticket)
 

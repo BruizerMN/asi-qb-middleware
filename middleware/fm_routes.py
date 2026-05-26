@@ -65,6 +65,9 @@ def post_invoice():
         return jsonify({"status": "error", "error": "invoice payload is required"}), 400
 
     try:
+        # Ensure Customer:Job exists before submitting — QB won't auto-create it.
+        com.ensure_customer_job(invoice.get("customer_name", ""), company)
+
         qbxml = build_invoice_add(invoice)
         qb_invoice_id = com.submit_invoice(qbxml, company)
         return jsonify({

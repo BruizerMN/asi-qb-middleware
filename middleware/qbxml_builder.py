@@ -122,11 +122,23 @@ def build_invoice_add(payload: dict) -> str:
 
 
 def build_customer_query(customer_name: str) -> str:
-    """Check if a customer exists in QB by full name."""
+    """Check if a customer (or Customer:Job) exists in QB by FullName."""
     root = ET.Element("QBXML")
     msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
     req = ET.SubElement(msgs, "CustomerQueryRq", requestID="1")
     _text(req, "FullName", customer_name)
+    _text(req, "OwnerID", "0")
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
+def build_customer_add_job(parent_list_id: str, job_name: str) -> str:
+    """Create a QB sub-customer (job) under the given parent customer."""
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "CustomerAddRq", requestID="1")
+    cust = ET.SubElement(req, "CustomerAdd")
+    _text(cust, "Name", _ascii_safe(job_name))
+    _text(cust, "ParentRef/ListID", parent_list_id)
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 
