@@ -253,6 +253,7 @@ def build_invoice_query(ref_number: str) -> str:
     msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
     req = ET.SubElement(msgs, "InvoiceQueryRq", requestID="1")
     _text(req, "RefNumber", ref_number)
+    _text(req, "IncludeLineItems", "true")
     _text(req, "OwnerID", "0")
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
