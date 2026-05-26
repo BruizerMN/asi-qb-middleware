@@ -88,9 +88,6 @@ def build_invoice_add(payload: dict) -> str:
     if payload.get("terms"):
         _text(inv, "TermsRef/FullName", _ascii_safe(payload["terms"]))
 
-    if payload.get("salesperson"):
-        _text(inv, "SalesRepRef/FullName", _ascii_safe(payload["salesperson"]))
-
     if payload.get("ship_date"):
         _text(inv, "ShipDate", payload["ship_date"])
 
