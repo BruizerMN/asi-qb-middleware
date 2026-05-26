@@ -14,6 +14,7 @@ Endpoints:
     POST /fm/debug-invoice  — return generated qbXML without submitting (dev only)
 """
 
+import html as _html
 from functools import wraps
 from flask import Blueprint, request, jsonify
 
@@ -212,6 +213,174 @@ def debug_invoice():
         return jsonify({"status": "ok", "qbxml": qbxml})
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 500
+
+
+@bp.get("/view-invoice")
+def view_invoice():
+    """
+    Render a QB invoice as HTML, styled to match QB Desktop's invoice form.
+
+    Query params:
+        invoice_id  — QB invoice number (FM QB_InvoiceID field)
+        company     — "acoustical" or "architectural"
+        api_key     — shared API key (query string since GET can't send custom headers)
+    """
+    if request.args.get("api_key", "") != API_KEY:
+        return "<h1>Unauthorized</h1>", 401
+
+    invoice_id = request.args.get("invoice_id", "").strip()
+    company    = request.args.get("company", "").lower()
+
+    if not invoice_id:
+        return "<h1>Missing invoice_id parameter</h1>", 400
+    if company not in ("acoustical", "architectural"):
+        return "<h1>Missing or invalid company parameter</h1>", 400
+
+    try:
+        inv = com.get_invoice(invoice_id, company)
+        return _render_invoice_html(inv)
+    except RuntimeError as e:
+        return f"<h1 style='font-family:Arial'>Error</h1><p style='font-family:Arial'>{_html.escape(str(e))}</p>", 422
+    except Exception as e:
+        return f"<h1 style='font-family:Arial'>Unexpected Error</h1><p style='font-family:Arial'>{_html.escape(str(e))}</p>", 500
+
+
+def _render_invoice_html(inv: dict) -> str:
+    """Render a QB invoice dict as an HTML page styled like QB Desktop."""
+    h = _html.escape
+
+    def fmt_date(d):
+        if d and len(d) == 10:
+            return f"{d[5:7]}/{d[8:10]}/{d[:4]}"
+        return d or ""
+
+    def fmt_money(v):
+        try:
+            return f"{float(v):,.2f}"
+        except (ValueError, TypeError):
+            return str(v) if v else "0.00"
+
+    def fmt_addr(a):
+        parts = [a.get("addr1",""), a.get("addr2",""), a.get("addr3","")]
+        parts = [p for p in parts if p]
+        csz = " ".join(filter(None, [a.get("city",""), a.get("state",""), a.get("zip","")]))
+        if csz:
+            parts.append(csz)
+        return "<br>".join(h(p) for p in parts)
+
+    # Line item rows
+    line_rows = ""
+    for i, li in enumerate(inv["line_items"]):
+        bg = "#EAF3FB" if i % 2 == 1 else "#FFFFFF"
+        desc = h(li["description"]).replace("\n", "<br>")
+        line_rows += f"""
+        <tr style="background:{bg}">
+          <td>{h(li['uom'])}</td>
+          <td>{h(li['item'])}</td>
+          <td class="num">{h(li['quantity'])}</td>
+          <td class="desc">{desc}</td>
+          <td class="num">{fmt_money(li['rate'])}</td>
+          <td class="num">{fmt_money(li['amount'])}</td>
+        </tr>"""
+
+    memo_html = (
+        f'<div class="memo"><strong>Memo:</strong> {h(inv["memo"])}</div>'
+        if inv.get("memo") else ""
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Invoice #{h(inv['ref_number'])}</title>
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#333;background:#fff;padding:24px 28px}}
+    .inv-title{{font-size:34px;font-weight:bold;color:#111;line-height:1}}
+    .hdr{{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px}}
+    .hdr-right{{display:flex;gap:14px}}
+    .hdr-block{{min-width:130px}}
+    .hdr-block.wide{{min-width:180px}}
+    .lbl{{font-size:9px;color:#666;text-transform:uppercase;letter-spacing:.5px;font-weight:bold;margin-bottom:2px}}
+    .box{{border:1px solid #c0c0c0;background:#f9f9f9;padding:5px 8px;min-height:26px;font-size:12px;line-height:1.45}}
+    .box.addr{{min-height:64px}}
+    .fields-bar{{display:flex;border:1px solid #c0c0c0;border-bottom:none}}
+    .fc{{flex:1;padding:5px 10px;border-right:1px solid #c0c0c0}}
+    .fc:last-child{{border-right:none}}
+    .fc.wide{{flex:2}}
+    table{{width:100%;border-collapse:collapse;border:1px solid #c0c0c0}}
+    thead tr{{background:#edf1f5}}
+    th{{padding:5px 8px;font-size:9px;text-transform:uppercase;color:#555;letter-spacing:.4px;border-right:1px solid #c0c0c0;border-bottom:2px solid #b0c4d4;font-weight:bold;text-align:left;white-space:nowrap}}
+    th:last-child{{border-right:none}}
+    td{{padding:5px 8px;vertical-align:top;border-right:1px solid #dce8f0}}
+    td:last-child{{border-right:none}}
+    tr{{border-bottom:1px solid #dce8f0}}
+    td.num{{text-align:right;white-space:nowrap}}
+    td.desc{{white-space:pre-wrap}}
+    .footer{{display:flex;justify-content:flex-end;padding:10px 14px;border:1px solid #c0c0c0;border-top:none}}
+    .totals{{width:270px}}
+    .tr{{display:flex;justify-content:space-between;padding:3px 0;font-size:12px}}
+    .tr.bal{{font-weight:bold;font-size:14px;border-top:2px solid #333;margin-top:5px;padding-top:6px}}
+    .memo{{font-size:11px;color:#666;margin-top:10px;padding:6px 8px;border-left:3px solid #b0c4d4}}
+  </style>
+</head>
+<body>
+
+<div class="hdr">
+  <div class="inv-title">Invoice</div>
+  <div class="hdr-right">
+    <div class="hdr-block">
+      <div class="lbl">Date</div>
+      <div class="box">{fmt_date(inv['txn_date'])}</div>
+      <div class="lbl" style="margin-top:8px">Invoice #</div>
+      <div class="box">{h(inv['ref_number'])}</div>
+    </div>
+    <div class="hdr-block wide">
+      <div class="lbl">Bill To</div>
+      <div class="box addr">{fmt_addr(inv['bill_address'])}</div>
+    </div>
+    <div class="hdr-block wide">
+      <div class="lbl">Ship To</div>
+      <div class="box addr">{fmt_addr(inv['ship_address'])}</div>
+    </div>
+  </div>
+</div>
+
+<div class="fields-bar">
+  <div class="fc wide"><div class="lbl">Customer · Job</div><div>{h(inv['customer'])}</div></div>
+  <div class="fc"><div class="lbl">P.O. Number</div><div>{h(inv['po_number'])}</div></div>
+  <div class="fc"><div class="lbl">Terms</div><div>{h(inv['terms'])}</div></div>
+  <div class="fc"><div class="lbl">Rep</div><div>{h(inv['rep'])}</div></div>
+  <div class="fc"><div class="lbl">Via</div><div>{h(inv['ship_method'])}</div></div>
+  <div class="fc"><div class="lbl">Class</div><div>{h(inv['class_name'])}</div></div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width:60px">U/M</th>
+      <th style="width:130px">Item Code</th>
+      <th style="width:75px;text-align:right">Quantity</th>
+      <th>Description</th>
+      <th style="width:95px;text-align:right">Price Each</th>
+      <th style="width:95px;text-align:right">Amount</th>
+    </tr>
+  </thead>
+  <tbody>{line_rows}
+  </tbody>
+</table>
+
+<div class="footer">
+  <div class="totals">
+    <div class="tr"><span>Total</span><span>{fmt_money(inv['total'])}</span></div>
+    <div class="tr"><span>Payments Applied</span><span>{fmt_money(inv['applied'])}</span></div>
+    <div class="tr bal"><span>Balance Due</span><span>{fmt_money(inv['balance'])}</span></div>
+  </div>
+</div>
+
+{memo_html}
+</body>
+</html>"""
 
 
 @bp.post("/list-ship-methods")

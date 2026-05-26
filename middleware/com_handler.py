@@ -20,7 +20,8 @@ from .qbxml_builder import (
     build_company_query,
     build_customer_query, build_customer_add_job,
     build_customer_list_query, build_item_list_query,
-    build_item_query_by_name, build_terms_query, build_ship_method_query, ITEM_QUERY_TYPES,
+    build_item_query_by_name, build_terms_query, build_ship_method_query,
+    build_invoice_query, ITEM_QUERY_TYPES,
 )
 
 APP_NAME = "ASI QB Middleware"
@@ -476,6 +477,80 @@ def get_all_terms() -> list:
                 "discount_pct":   t.findtext("DiscountPct") or "",
             })
         return terms
+    finally:
+        _close_session(rp, ticket)
+
+
+def get_invoice(ref_number: str, expected_slug: str) -> dict:
+    """
+    Fetch a QB invoice by RefNumber (the QB invoice number stored in FM QB_InvoiceID).
+    Returns a structured dict suitable for HTML rendering.
+    Raises RuntimeError if QB is not running, wrong company, or invoice not found.
+    """
+    rp, ticket = _open_session()
+    try:
+        info = _get_company_info(rp, ticket)
+        verify_company(info, expected_slug)
+
+        resp = rp.ProcessRequest(ticket, build_invoice_query(ref_number))
+        root = ET.fromstring(resp)
+
+        rs = root.find(".//InvoiceQueryRs")
+        if rs is not None:
+            code = rs.get("statusCode", "0")
+            if code not in ("0", "1"):
+                raise RuntimeError(
+                    f"QB invoice query failed: {rs.get('statusMessage')} (code {code})"
+                )
+
+        ret = root.find(".//InvoiceRet")
+        if ret is None:
+            raise RuntimeError(f"Invoice #{ref_number} was not found in QuickBooks.")
+
+        def _addr(tag: str) -> dict:
+            a = ret.find(tag)
+            if a is None:
+                return {}
+            return {
+                "addr1": a.findtext("Addr1") or "",
+                "addr2": a.findtext("Addr2") or "",
+                "addr3": a.findtext("Addr3") or "",
+                "city":  a.findtext("City")  or "",
+                "state": a.findtext("State") or "",
+                "zip":   a.findtext("PostalCode") or "",
+            }
+
+        lines = []
+        for li in ret.findall("InvoiceLineRet"):
+            lines.append({
+                "item":        li.findtext("ItemRef/FullName") or "",
+                "description": li.findtext("Desc") or "",
+                "uom":         li.findtext("UnitOfMeasure") or "",
+                "quantity":    li.findtext("Quantity") or "",
+                "rate":        li.findtext("Rate") or "",
+                "amount":      li.findtext("Amount") or "",
+            })
+
+        return {
+            "txn_id":       ret.findtext("TxnID") or "",
+            "txn_date":     ret.findtext("TxnDate") or "",
+            "ref_number":   ret.findtext("RefNumber") or ref_number,
+            "customer":     ret.findtext("CustomerRef/FullName") or "",
+            "class_name":   ret.findtext("ClassRef/FullName") or "",
+            "bill_address": _addr("BillAddress"),
+            "ship_address": _addr("ShipAddress"),
+            "po_number":    ret.findtext("PONumber") or "",
+            "terms":        ret.findtext("TermsRef/FullName") or "",
+            "rep":          ret.findtext("SalesRepRef/FullName") or "",
+            "ship_date":    ret.findtext("ShipDate") or "",
+            "ship_method":  ret.findtext("ShipMethodRef/FullName") or "",
+            "memo":         ret.findtext("Memo") or "",
+            "subtotal":     ret.findtext("Subtotal") or "0",
+            "total":        ret.findtext("TotalAmount") or "0",
+            "applied":      ret.findtext("AppliedAmount") or "0",
+            "balance":      ret.findtext("BalanceRemaining") or "0",
+            "line_items":   lines,
+        }
     finally:
         _close_session(rp, ticket)
 
