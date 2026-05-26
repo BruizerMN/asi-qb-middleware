@@ -20,7 +20,7 @@ from .qbxml_builder import (
     build_company_query,
     build_customer_query, build_customer_add_job,
     build_customer_list_query, build_item_list_query,
-    build_item_query_by_name, ITEM_QUERY_TYPES,
+    build_item_query_by_name, build_terms_query, ITEM_QUERY_TYPES,
 )
 
 APP_NAME = "ASI QB Middleware"
@@ -443,6 +443,25 @@ def get_customer_by_account(account_number: str) -> dict | None:
 
         return result
 
+    finally:
+        _close_session(rp, ticket)
+
+
+def get_all_terms() -> list:
+    """Return all active QB payment terms as a list of {name, days_due, discount_days, discount_pct} dicts."""
+    rp, ticket = _open_session()
+    try:
+        response = rp.ProcessRequest(ticket, build_terms_query())
+        root = ET.fromstring(response)
+        terms = []
+        for t in root.findall(".//StandardTermsRet") + root.findall(".//DateDrivenTermsRet"):
+            terms.append({
+                "name":           t.findtext("Name") or "",
+                "days_due":       t.findtext("StdDueDays") or t.findtext("DayOfMonthDue") or "",
+                "discount_days":  t.findtext("StdDiscountDays") or "",
+                "discount_pct":   t.findtext("DiscountPct") or "",
+            })
+        return terms
     finally:
         _close_session(rp, ticket)
 

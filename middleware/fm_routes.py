@@ -214,6 +214,19 @@ def debug_invoice():
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
+@bp.post("/list-terms")
+@require_api_key
+def list_terms():
+    """Return all active QB payment terms."""
+    try:
+        terms = com.get_all_terms()
+        return jsonify({"status": "ok", "count": len(terms), "terms": terms})
+    except RuntimeError as e:
+        return jsonify({"status": "error", "error": str(e)}), 422
+    except Exception as e:
+        return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+
+
 @bp.post("/ping")
 @require_api_key
 def ping():
