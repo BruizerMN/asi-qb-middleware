@@ -493,6 +493,13 @@ def get_invoice(ref_number: str, expected_slug: str) -> dict:
         verify_company(info, expected_slug)
 
         resp = rp.ProcessRequest(ticket, build_invoice_query(ref_number))
+
+        # Log response for debugging
+        import os
+        _log = os.path.join(os.path.expanduser("~"), "qb_invoice_query_response.xml")
+        with open(_log, "w", encoding="utf-8") as f:
+            f.write(resp)
+
         root = ET.fromstring(resp)
 
         rs = root.find(".//InvoiceQueryRs")
