@@ -50,14 +50,31 @@ import xml.etree.ElementTree as ET
 
 def _ascii_safe(value: str) -> str:
     """Replace Unicode typographic characters with ASCII equivalents.
-    QB Desktop's XML parser does not support non-ASCII characters."""
+    QB Desktop's XML parser does not support non-ASCII characters.
+
+    Also maps Windows-1252 C1 control characters (U+0080-U+009F) to their
+    correct Unicode equivalents before converting to ASCII. QB Desktop is a
+    Win32 application whose qbXML output may contain raw CP1252 bytes (e.g.
+    0x92 for the right single quote) even when the XML header declares UTF-8.
+    Python's XML parser reads those as C1 control characters, so we remap
+    them here before the ASCII conversion step."""
     return (str(value)
+        # Step 1: remap Windows-1252 C1 bytes that QB may emit as raw bytes.
+        .replace('', '‘')  # CP1252 0x91 -> LEFT SINGLE QUOTATION MARK
+        .replace('', '’')  # CP1252 0x92 -> RIGHT SINGLE QUOTATION MARK
+        .replace('', '“')  # CP1252 0x93 -> LEFT DOUBLE QUOTATION MARK
+        .replace('', '”')  # CP1252 0x94 -> RIGHT DOUBLE QUOTATION MARK
+        .replace('', '–')  # CP1252 0x96 -> EN DASH
+        .replace('', '—')  # CP1252 0x97 -> EM DASH
+        .replace('', '…')  # CP1252 0x85 -> HORIZONTAL ELLIPSIS
+        # Step 2: convert typographic Unicode characters to ASCII equivalents.
         .replace('“', '"').replace('”', '"')   # curly double quotes
-        .replace('‘', "'").replace('’', "'")   # curly single quotes / apostrophe
-        .replace('–', '-').replace('—', '-')   # en dash, em dash
-        .replace(' ', ' ')                          # non-breaking space
-        .replace('…', '...')                        # ellipsis
-        .encode('ascii', 'replace').decode('ascii')      # replace any remaining non-ASCII with ?
+        .replace('‘', "'").replace('’', "'")   # curly single quotes
+        .replace('–', '-').replace('—', '-')   # en/em dash
+        .replace(' ', ' ')                             # non-breaking space
+        .replace('…', '...')                         # ellipsis
+        # Step 3: replace any remaining non-ASCII with ?
+        .encode('ascii', 'replace').decode('ascii')
     )
 
 
