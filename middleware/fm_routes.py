@@ -70,7 +70,19 @@ def post_invoice():
         # ensure_customer_job returns the name to use in InvoiceAdd: normally the
         # same as customer_name, but corrected if a stale FM name was detected and
         # the customer was found via ListID fallback.
-        customer_list_id = invoice.get("customer_list_id", "")
+        customer_list_id    = invoice.get("customer_list_id", "")
+        customer_account_no = invoice.get("customer_account_number", "")
+
+        # If QB_CustomerID wasn't populated in FM (empty customer_list_id), look up
+        # the customer's QB ListID fresh from QB using the account number.
+        # Uses the same proven path as the sync: bypass cache, match by AccountNumber.
+        if not customer_list_id and customer_account_no:
+            customer_data = com.get_customer_by_account(
+                customer_account_no, bypass_cache=True
+            )
+            if customer_data:
+                customer_list_id = customer_data.get("list_id", "")
+
         corrected_name = com.ensure_customer_job(
             invoice.get("customer_name", ""), company, customer_list_id
         )
