@@ -83,9 +83,18 @@ def post_invoice():
             if customer_data:
                 customer_list_id = customer_data.get("list_id", "")
 
-        corrected_name = com.ensure_customer_job(
-            invoice.get("customer_name", ""), company, customer_list_id
-        )
+        try:
+            corrected_name = com.ensure_customer_job(
+                invoice.get("customer_name", ""), company, customer_list_id
+            )
+        except RuntimeError as e:
+            # Re-raise with route-level diagnostics so we can see what reached
+            # the middleware from FM.
+            raise RuntimeError(
+                f"{e} | route debug: "
+                f"list_id={customer_list_id!r} "
+                f"acct={customer_account_no!r}"
+            )
         if corrected_name != invoice.get("customer_name", ""):
             invoice = dict(invoice)  # don't mutate the original
             invoice["customer_name"] = corrected_name
