@@ -26,8 +26,6 @@ param(
 Set-StrictMode -Off
 $ErrorActionPreference = "Stop"
 
-$ScriptBuild = "0024"
-
 $RepoUrl  = "https://github.com/BruizerMN/asi-qb-middleware.git"
 $RepoPath = "C:\Services\asi-qb-middleware"
 $TaskName = "ASI QB Middleware"
@@ -103,7 +101,6 @@ function Install-ViaDownload($url, $label, $silentArgs) {
 Write-Host ""
 Write-Host "  ASI QuickBooks Middleware -- Workstation Installer" -ForegroundColor Cyan
 Write-Host "  ===================================================" -ForegroundColor Cyan
-Write-Host "  Installer build: $ScriptBuild" -ForegroundColor Gray
 
 # ---------------------------------------------------------------------------
 # Install Python
@@ -111,8 +108,24 @@ Write-Host "  Installer build: $ScriptBuild" -ForegroundColor Gray
 
 Write-Header "Python"
 
-if ((Command-Exists "py") -or (Command-Exists "python")) {
-    $pyver = & py --version 2>&1
+# Find a working Python command. We can't just check if 'python' or 'py' exists
+# because Windows 11 ships a Microsoft Store stub named python.exe that outputs
+# a redirect prompt instead of running Python. We validate by checking that
+# --version returns an actual version string (e.g. "Python 3.12.4").
+function Find-Python {
+    foreach ($cmd in @("py", "python", "python3")) {
+        if (Command-Exists $cmd) {
+            $out = & $cmd --version 2>&1
+            if ("$out" -match "Python \d+\.\d+") { return $cmd }
+        }
+    }
+    return $null
+}
+
+$pyCmd = Find-Python
+
+if ($pyCmd) {
+    $pyver = & $pyCmd --version 2>&1
     Write-OK "Already installed ($pyver)"
 } else {
     $wingetOk = $false
@@ -121,16 +134,17 @@ if ((Command-Exists "py") -or (Command-Exists "python")) {
         Refresh-Path
     }
 
-    if (-not $wingetOk -or -not (Command-Exists "python")) {
-        if ($wingetOk) { Write-Warn "winget reported success but python not found -- trying direct download..." }
+    if (-not $wingetOk) {
+        if (Command-Exists "winget") { Write-Warn "winget install failed -- trying direct download..." }
         Install-ViaDownload $PythonInstallerUrl "Python 3.12.4" "/quiet InstallAllUsers=0 PrependPath=1 Include_test=0"
         Refresh-Path
     }
 
-    if (-not (Command-Exists "python")) {
-        Abort "Python installed but not found on PATH. Close this window, reopen PowerShell, and re-run the installer."
+    $pyCmd = Find-Python
+    if (-not $pyCmd) {
+        Abort "Python installed but no working python command found on PATH. Close this window, reopen PowerShell, and re-run the installer."
     }
-    $pyver = & python --version 2>&1
+    $pyver = & $pyCmd --version 2>&1
     Write-OK "Installed ($pyver)"
 }
 
@@ -201,7 +215,7 @@ if (Test-Path "$RepoPath\.git") {
 Write-Header "Python dependencies"
 
 Write-Step "Running pip install..."
-& py -m pip install --quiet -r "$RepoPath\requirements.txt"
+& $pyCmd -m pip install --quiet -r "$RepoPath\requirements.txt"
 if ($LASTEXITCODE -ne 0) { Abort "pip install failed." }
 Write-OK "Dependencies installed"
 
