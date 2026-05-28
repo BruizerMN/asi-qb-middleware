@@ -15,7 +15,12 @@ param(
     [string]$BundledEnvPath = "",
 
     # Suppress "Press any key to exit" prompts -- used when running from installer.
-    [switch]$Silent
+    [switch]$Silent,
+
+    # Path to a result file the Inno Setup installer reads after this script exits.
+    # Write "OK" on success or an error message on failure so the installer can
+    # show a proper error dialog rather than silently appearing to succeed.
+    [string]$ResultFile = ""
 )
 
 Set-StrictMode -Off
@@ -48,6 +53,10 @@ function Abort($text) {
     Write-Host ""
     Write-Host "  FAILED: $text" -ForegroundColor Red
     Write-Host ""
+    if ($ResultFile -ne "") {
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $False
+        [System.IO.File]::WriteAllText($ResultFile, "FAILED: $text", $utf8NoBom)
+    }
     if (-not $Silent) {
         Write-Host "Press any key to exit..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -339,6 +348,10 @@ if ($running) {
 Write-Host ""
 Write-Host "  All done! The middleware will start automatically at each logon." -ForegroundColor Cyan
 Write-Host ""
+if ($ResultFile -ne "") {
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $False
+    [System.IO.File]::WriteAllText($ResultFile, "OK", $utf8NoBom)
+}
 if (-not $Silent) {
     Write-Host "Press any key to exit..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")

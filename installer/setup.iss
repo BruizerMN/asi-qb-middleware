@@ -59,9 +59,44 @@ Source: "bundled.env";            DestDir: "{tmp}"; DestName: "bundled.env"; Fla
 [Run]
 ; Run install.ps1 with the bundled .env and -Silent flag.
 ; -Silent suppresses "Press any key" prompts so the installer flow stays clean.
-; The script downloads Python/Git if needed, clones the repo, installs deps,
-; writes the .env, registers the Task Scheduler task, and starts the middleware.
+; -ResultFile tells the script where to write its outcome so the [Code] section
+;  below can show a proper error dialog if something went wrong.
 Filename: "powershell.exe"; \
-  Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{tmp}\install.ps1"" -BundledEnvPath ""{tmp}\bundled.env"" -Silent"; \
+  Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{tmp}\install.ps1"" -BundledEnvPath ""{tmp}\bundled.env"" -Silent -ResultFile ""{tmp}\install-result.txt"""; \
   StatusMsg: "Installing ASI QB Middleware (this may take a few minutes)..."; \
   Flags: waituntilterminated
+
+[Code]
+// Read the first line of a file. Returns empty string if file doesn't exist.
+function ReadResultFile(const Path: String): String;
+var
+  Lines: TArrayOfString;
+begin
+  Result := '';
+  if LoadStringsFromFile(Path, Lines) and (GetArrayLength(Lines) > 0) then
+    Result := Trim(Lines[0]);
+end;
+
+// After the installer finishes, check the result file written by install.ps1.
+// If it's missing or doesn't contain "OK", show a clear error dialog so IT
+// knows the installation did not complete -- not a silent false success.
+procedure DeinitializeSetup();
+var
+  ResultPath, Status: String;
+begin
+  ResultPath := ExpandConstant('{tmp}\install-result.txt');
+  if FileExists(ResultPath) then begin
+    Status := ReadResultFile(ResultPath);
+    if Status <> 'OK' then
+      MsgBox(
+        'Installation did not complete successfully.' + #13#10#13#10 +
+        Status + #13#10#13#10 +
+        'Please contact your administrator and provide the error above.',
+        mbError, MB_OK);
+  end else begin
+    MsgBox(
+      'Installation did not complete successfully (no result was recorded).' + #13#10#13#10 +
+      'Please contact your administrator.',
+      mbError, MB_OK);
+  end;
+end;
