@@ -89,11 +89,17 @@ def post_invoice():
             )
         except RuntimeError as e:
             # Re-raise with route-level diagnostics so we can see what reached
-            # the middleware from FM.
+            # the middleware from FM. Distinguish missing key vs empty value.
+            list_id_debug = (
+                "list_id=MISSING" if "customer_list_id" not in invoice
+                else f"list_id={customer_list_id!r}"
+            )
+            acct_debug = (
+                "acct=MISSING" if "customer_account_number" not in invoice
+                else f"acct={customer_account_no!r}"
+            )
             raise RuntimeError(
-                f"{e} | route debug: "
-                f"list_id={customer_list_id!r} "
-                f"acct={customer_account_no!r}"
+                f"{e} | route debug: {list_id_debug} {acct_debug}"
             )
         if corrected_name != invoice.get("customer_name", ""):
             invoice = dict(invoice)  # don't mutate the original
