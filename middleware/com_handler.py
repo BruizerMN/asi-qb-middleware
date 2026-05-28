@@ -17,8 +17,9 @@ except ImportError:
 
 from .config import QB_COMPANY_FILES
 from .qbxml_builder import (
+    _ascii_safe,
     build_company_query,
-    build_customer_query, build_customer_add_job,
+    build_customer_query, build_customer_query_by_list_id, build_customer_add_job,
     build_customer_list_query, build_item_list_query,
     build_item_query_by_name, build_terms_query, build_ship_method_query,
     build_invoice_query, ITEM_QUERY_TYPES,
@@ -208,43 +209,81 @@ def get_open_company() -> dict:
         _close_session(rp, ticket)
 
 
-def ensure_customer_job(customer_job_fullname: str, expected_slug: str) -> None:
+def ensure_customer_job(
+    customer_job_fullname: str,
+    expected_slug: str,
+    customer_list_id: str = "",
+) -> str:
     """
     Ensure a Customer:Job (sub-customer) exists in QB. Creates it if missing.
 
     customer_job_fullname is "CustomerFullName:JobName" as sent in the invoice payload.
     If there is no colon, the name is a top-level customer and no action is needed.
 
-    Raises RuntimeError if the parent customer is not in QB or job creation fails.
+    customer_list_id is the QB ListID (QB_CustomerID from FM). When provided, it is
+    used as a fallback if the FullName query returns nothing — this handles stale names
+    in FM caused by name edits in QB since the last sync, or apostrophes and other
+    characters that behave differently across the sync and invoice paths.
+
+    Returns the customer_job_fullname to use in InvoiceAdd. Normally this is the
+    same as the input, but when the ListID fallback fires and finds the parent under a
+    different name, the corrected "ActualName:JobName" string is returned so the
+    InvoiceAdd uses the current QB name rather than the stale FM one.
+
+    Raises RuntimeError if the parent customer cannot be found or job creation fails.
     """
     if ":" not in customer_job_fullname:
-        return
+        return customer_job_fullname
 
     rp, ticket = _open_session()
     try:
         info = _get_company_info(rp, ticket)
         verify_company(info, expected_slug)
 
-        # Check whether the job already exists.
-        resp = rp.ProcessRequest(ticket, build_customer_query(customer_job_fullname))
+        # _ascii_safe is required: QB's XML parser rejects non-ASCII characters.
+        # (build_customer_query also applies it, but we need the safe version here
+        # to construct the corrected return value consistently.)
+        safe_name = _ascii_safe(customer_job_fullname)
+        parent_safe, job_name = safe_name.split(":", 1)
+
+        # Check whether the job already exists under the (safe) name FM has.
+        resp = rp.ProcessRequest(ticket, build_customer_query(safe_name))
         root = ET.fromstring(resp)
         if root.find(".//CustomerRet") is not None:
-            return  # job already in QB, nothing to do
+            return customer_job_fullname  # job exists, nothing to do
 
-        # Job is missing — look up parent customer to get their ListID.
-        parent_fullname, job_name = customer_job_fullname.split(":", 1)
-        resp = rp.ProcessRequest(ticket, build_customer_query(parent_fullname))
+        # Job not found. Look up parent customer by FullName.
+        resp = rp.ProcessRequest(ticket, build_customer_query(parent_safe))
         root = ET.fromstring(resp)
         parent_ret = root.find(".//CustomerRet")
+
+        # FullName lookup failed — try ListID fallback if we have one.
+        # This fires when the customer's name in QB differs from what FM has stored
+        # (e.g. name corrected in QB since last sync, apostrophe added/removed).
+        corrected_parent = None
+        if parent_ret is None and customer_list_id:
+            resp = rp.ProcessRequest(ticket, build_customer_query_by_list_id(customer_list_id))
+            root = ET.fromstring(resp)
+            parent_ret = root.find(".//CustomerRet")
+            if parent_ret is not None:
+                corrected_parent = _ascii_safe(parent_ret.findtext("FullName") or "")
+                # Check whether the job already exists under the corrected parent name.
+                corrected_job = corrected_parent + ":" + job_name
+                resp2 = rp.ProcessRequest(ticket, build_customer_query(corrected_job))
+                root2 = ET.fromstring(resp2)
+                if root2.find(".//CustomerRet") is not None:
+                    return corrected_job  # job exists under corrected name
+
         if parent_ret is None:
             raise RuntimeError(
-                f"Customer '{parent_fullname}' was not found in QuickBooks. "
+                f"Customer '{parent_safe}' was not found in QuickBooks. "
                 "Run QB - Sync Customers to link this customer, then try again."
             )
+
         parent_list_id = parent_ret.findtext("ListID") or ""
         if not parent_list_id:
             raise RuntimeError(
-                f"Could not retrieve the QuickBooks ListID for customer '{parent_fullname}'."
+                f"Could not retrieve the QuickBooks ListID for customer '{parent_safe}'."
             )
 
         # Create the job under the parent.
@@ -258,6 +297,12 @@ def ensure_customer_job(customer_job_fullname: str, expected_slug: str) -> None:
                 raise RuntimeError(
                     f"QuickBooks rejected job creation for '{job_name}': {msg} (code {code})"
                 )
+
+        # Return the name the InvoiceAdd should use. If the ListID fallback found a
+        # corrected parent name, use that — otherwise use the original safe name.
+        if corrected_parent:
+            return corrected_parent + ":" + job_name
+        return customer_job_fullname
 
     finally:
         _close_session(rp, ticket)
@@ -397,13 +442,17 @@ def get_all_items(expected_slug: str) -> list:
         _close_session(rp, ticket)
 
 
-def get_customer_by_account(account_number: str) -> dict | None:
+def get_customer_by_account(account_number: str, bypass_cache: bool = False) -> dict | None:
     """
     Return a single customer matching account_number, or None if not found.
 
     QB CustomerQueryRq has no AccountNumber filter, so a full fetch is needed
     when the cache is cold. On a cache hit (within _CACHE_TTL), the QB fetch is
     skipped entirely — only a cheap CompanyQueryRq is made to detect the slug.
+
+    bypass_cache=True forces a fresh QB fetch regardless of cache state. Always
+    pass True from sync endpoints — the purpose of a sync is to get current data
+    from QB, so a cache hit would defeat the point and return stale values.
     """
     rp, ticket = _open_session()
     try:
@@ -411,8 +460,8 @@ def get_customer_by_account(account_number: str) -> dict | None:
         info = _get_company_info(rp, ticket)
         slug = _detect_slug(info["name"])
 
-        # Cache hit — no customer list query needed.
-        if slug:
+        # Cache hit — skip QB fetch unless caller explicitly wants fresh data.
+        if slug and not bypass_cache:
             hit, customer = _customer_cache_lookup(slug, account_number)
             if hit:
                 return customer

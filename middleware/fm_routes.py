@@ -67,7 +67,16 @@ def post_invoice():
 
     try:
         # Ensure Customer:Job exists before submitting — QB won't auto-create it.
-        com.ensure_customer_job(invoice.get("customer_name", ""), company)
+        # ensure_customer_job returns the name to use in InvoiceAdd: normally the
+        # same as customer_name, but corrected if a stale FM name was detected and
+        # the customer was found via ListID fallback.
+        customer_list_id = invoice.get("customer_list_id", "")
+        corrected_name = com.ensure_customer_job(
+            invoice.get("customer_name", ""), company, customer_list_id
+        )
+        if corrected_name != invoice.get("customer_name", ""):
+            invoice = dict(invoice)  # don't mutate the original
+            invoice["customer_name"] = corrected_name
 
         qbxml = build_invoice_add(invoice)
         qb_invoice_id = com.submit_invoice(qbxml, company)
@@ -158,7 +167,9 @@ def sync_customer():
         return jsonify({"status": "error", "error": "account_number is required"}), 400
 
     try:
-        customer = com.get_customer_by_account(account_number)
+        # bypass_cache=True: a sync must always fetch current data from QB.
+        # The cache exists for performance on the invoice path — not for syncs.
+        customer = com.get_customer_by_account(account_number, bypass_cache=True)
         if customer is None:
             return jsonify({"status": "not_found", "account_number": account_number})
         return jsonify({"status": "ok", "customer": customer})

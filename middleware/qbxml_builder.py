@@ -133,11 +133,25 @@ def build_invoice_add(payload: dict) -> str:
 
 
 def build_customer_query(customer_name: str) -> str:
-    """Check if a customer (or Customer:Job) exists in QB by FullName."""
+    """Check if a customer (or Customer:Job) exists in QB by FullName.
+    _ascii_safe is applied so non-ASCII characters in the name don't cause
+    QB's XML parser to reject or silently fail the query."""
     root = ET.Element("QBXML")
     msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
     req = ET.SubElement(msgs, "CustomerQueryRq", requestID="1")
-    _text(req, "FullName", customer_name)
+    _text(req, "FullName", _ascii_safe(customer_name))
+    _text(req, "OwnerID", "0")
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
+def build_customer_query_by_list_id(list_id: str) -> str:
+    """Look up a customer by QB ListID. Used as a fallback when a FullName
+    query fails due to a stale name stored in FM — the ListID never changes
+    even when the customer's name is edited in QB."""
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "CustomerQueryRq", requestID="1")
+    _text(req, "ListID", list_id)
     _text(req, "OwnerID", "0")
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
