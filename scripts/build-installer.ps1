@@ -113,6 +113,13 @@ Write-OK "Found: $iscc"
 
 Write-Header "Compiling installer"
 
+# Clear previous output so stale builds don't accumulate
+if (Test-Path $OutputDir) {
+    Write-Step "Clearing previous output..."
+    Remove-Item "$OutputDir\*" -Force -ErrorAction SilentlyContinue
+    Write-OK "Output folder cleared"
+}
+
 Write-Step "Running ISCC..."
 & $iscc /DMyAppVersion="$version" /DMyOutputName="$outputName" $IssFile
 if ($LASTEXITCODE -ne 0) { Abort "ISCC compilation failed (exit code $LASTEXITCODE)." }
