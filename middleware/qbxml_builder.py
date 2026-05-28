@@ -164,11 +164,13 @@ def build_customer_query(customer_name: str) -> str:
 def build_customer_query_by_list_id(list_id: str) -> str:
     """Look up a customer by QB ListID. Used as a fallback when a FullName
     query fails due to a stale name stored in FM — the ListID never changes
-    even when the customer's name is edited in QB."""
+    even when the customer's name is edited in QB.
+    ActiveStatus=All so inactive customers are found too."""
     root = ET.Element("QBXML")
     msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
     req = ET.SubElement(msgs, "CustomerQueryRq", requestID="1")
     _text(req, "ListID", list_id)
+    _text(req, "ActiveStatus", "All")
     _text(req, "OwnerID", "0")
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 

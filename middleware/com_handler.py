@@ -497,6 +497,43 @@ def get_customer_by_account(account_number: str, bypass_cache: bool = False) -> 
         _close_session(rp, ticket)
 
 
+def lookup_customer_by_list_id(list_id: str) -> dict:
+    """
+    Diagnostic helper: look up a single customer by ListID and return whatever
+    QB says. Used by the /fm/ping-customer endpoint to debug stale-name issues.
+    Returns a dict with keys: found (bool), list_id, full_name, active_status,
+    account_number, raw_status_code, raw_status_message.
+    """
+    rp, ticket = _open_session()
+    try:
+        import xml.etree.ElementTree as ET
+        resp = rp.ProcessRequest(ticket, build_customer_query_by_list_id(list_id))
+        root = ET.fromstring(resp)
+        rs = root.find(".//CustomerQueryRs")
+        status_code = rs.get("statusCode", "?") if rs is not None else "?"
+        status_msg  = rs.get("statusMessage", "") if rs is not None else ""
+        cust = root.find(".//CustomerRet")
+        if cust is None:
+            return {
+                "found": False,
+                "list_id": list_id,
+                "raw_status_code": status_code,
+                "raw_status_message": status_msg,
+            }
+        return {
+            "found": True,
+            "list_id": cust.findtext("ListID") or "",
+            "full_name": cust.findtext("FullName") or "",
+            "full_name_ascii": _ascii_safe(cust.findtext("FullName") or ""),
+            "account_number": cust.findtext("AccountNumber") or "",
+            "is_active": cust.findtext("IsActive") or "",
+            "raw_status_code": status_code,
+            "raw_status_message": status_msg,
+        }
+    finally:
+        _close_session(rp, ticket)
+
+
 def get_all_ship_methods() -> list:
     """Return all active QB shipping methods as a list of {name} dicts."""
     rp, ticket = _open_session()

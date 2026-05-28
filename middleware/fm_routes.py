@@ -209,6 +209,29 @@ def sync_item():
         return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
 
 
+@bp.post("/ping-customer")
+@require_api_key
+def ping_customer():
+    """
+    Diagnostic: look up a single customer by QB ListID and return what QB says.
+    Useful for verifying the ListID stored in FM is still valid in QB.
+
+    POST body: { "company": "acoustical"|"architectural", "list_id": "8000XXXX-..." }
+    Returns full_name, account_number, is_active, and raw QB status info.
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    list_id = data.get("list_id", "").strip()
+    if not list_id:
+        return jsonify({"status": "error", "error": "list_id is required"}), 400
+    try:
+        result = com.lookup_customer_by_list_id(list_id)
+        return jsonify({"status": "ok", "result": result})
+    except RuntimeError as e:
+        return jsonify({"status": "error", "error": str(e)}), 422
+    except Exception as e:
+        return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+
+
 @bp.post("/debug-invoice")
 @require_api_key
 def debug_invoice():
