@@ -12,9 +12,12 @@
   #define MyAppVersion "0.0.0"
 #endif
 
-#define MyAppName    "ASI QB Middleware"
+#define MyAppName      "ASI QB Middleware"
 #define MyAppPublisher "Bill Nienaber"
-#define MyOutputName "ASI-QB-Middleware-Setup"
+
+#ifndef MyOutputName
+  #define MyOutputName "ASI-QB-Middleware-Setup"
+#endif
 
 [Setup]
 AppName={#MyAppName}
