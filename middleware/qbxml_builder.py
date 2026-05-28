@@ -170,7 +170,9 @@ def build_customer_query_by_list_id(list_id: str) -> str:
     msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
     req = ET.SubElement(msgs, "CustomerQueryRq", requestID="1")
     _text(req, "ListID", list_id)
-    _text(req, "ActiveStatus", "All")
+    # Note: ActiveStatus cannot be combined with ListID in CustomerQueryRq --
+    # they are mutually exclusive filter types per the QB SDK schema.
+    # Querying by ListID returns the record regardless of active status.
     _text(req, "OwnerID", "0")
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
