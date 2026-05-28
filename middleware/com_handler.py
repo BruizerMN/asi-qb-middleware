@@ -275,8 +275,14 @@ def ensure_customer_job(
                     return corrected_job  # job exists under corrected name
 
         if parent_ret is None:
+            # Include debug info so we can tell whether the ListID fallback ran.
+            list_id_info = (
+                f"ListID tried: {customer_list_id!r}" if customer_list_id
+                else "no customer_list_id in payload"
+            )
             raise RuntimeError(
-                f"Customer '{parent_safe}' was not found in QuickBooks. "
+                f"Customer '{parent_safe}' was not found in QuickBooks "
+                f"({list_id_info}). "
                 "Run QB - Sync Customers to link this customer, then try again."
             )
 
