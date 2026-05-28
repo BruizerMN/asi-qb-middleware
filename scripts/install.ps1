@@ -115,8 +115,13 @@ Write-Header "Python"
 function Find-Python {
     foreach ($cmd in @("py", "python", "python3")) {
         if (Command-Exists $cmd) {
-            $out = & $cmd --version 2>&1
-            if ("$out" -match "Python \d+\.\d+") { return $cmd }
+            try {
+                $out = & $cmd --version 2>&1
+                if ("$out" -match "Python \d+\.\d+") { return $cmd }
+            } catch {
+                # Command exists but failed or wrote to stderr (e.g. Windows 11
+                # Microsoft Store stub) -- not a real Python, try the next one.
+            }
         }
     }
     return $null
