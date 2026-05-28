@@ -26,8 +26,14 @@ param(
 Set-StrictMode -Off
 $ErrorActionPreference = "Stop"
 
-$RepoUrl  = "https://github.com/BruizerMN/asi-qb-middleware.git"
-$RepoPath = "C:\Services\asi-qb-middleware"
+$RepoUrl   = "https://github.com/BruizerMN/asi-qb-middleware.git"
+$RepoPath  = "C:\Services\asi-qb-middleware"
+$TempLog   = "$env:TEMP\asi-qb-install.log"
+$FinalLog  = "$RepoPath\install.log"
+
+# Start capturing all output to a log file immediately.
+# Stop-Transcript is called in Abort() on failure and at the end on success.
+Start-Transcript -Path $TempLog -Force -ErrorAction SilentlyContinue
 $TaskName = "ASI QB Middleware"
 
 $PythonInstallerUrl = "https://www.python.org/ftp/python/3.12.4/python-3.12.4-amd64.exe"
@@ -51,6 +57,8 @@ function Abort($text) {
     Write-Host ""
     Write-Host "  FAILED: $text" -ForegroundColor Red
     Write-Host ""
+    Write-Host "  Log file: $TempLog" -ForegroundColor Gray
+    Stop-Transcript -ErrorAction SilentlyContinue
     if ($ResultFile -ne "") {
         $utf8NoBom = New-Object System.Text.UTF8Encoding $False
         [System.IO.File]::WriteAllText($ResultFile, "FAILED: $text", $utf8NoBom)
@@ -394,7 +402,13 @@ if ($running) {
 
 Write-Host ""
 Write-Host "  All done! The middleware will start automatically at each logon." -ForegroundColor Cyan
+Write-Host "  Log file: $FinalLog" -ForegroundColor Gray
 Write-Host ""
+
+# Stop transcript and copy the completed log to its permanent home.
+Stop-Transcript -ErrorAction SilentlyContinue
+Copy-Item $TempLog $FinalLog -Force -ErrorAction SilentlyContinue
+
 if ($ResultFile -ne "") {
     $utf8NoBom = New-Object System.Text.UTF8Encoding $False
     [System.IO.File]::WriteAllText($ResultFile, "OK", $utf8NoBom)

@@ -35,7 +35,7 @@ WelcomeLabel2=This will remove the ASI QuickBooks Middleware from this workstati
 WizardSelectTasks=Select components to remove
 SelectTasksLabel2=The middleware will always be removed. Check the boxes below to also remove Python and Git.
 ButtonInstall=Remove
-FinishedLabel=ASI QB Middleware has been removed from this workstation.
+FinishedLabel=ASI QB Middleware has been removed from this workstation.%n%nUninstall log: C:\ProgramData\ASI QB Middleware\uninstall.log
 
 [Tasks]
 Name: removepython; Description: "Remove Python  (uncheck if Python is used by other applications on this machine)"; Flags: unchecked

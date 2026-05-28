@@ -48,7 +48,7 @@ SetupIconFile=
 [Messages]
 WelcomeLabel1=ASI QuickBooks Middleware
 WelcomeLabel2=This installer will set up the ASI QuickBooks Middleware on this workstation.%n%nThe middleware runs in the background and allows FileMaker to post invoices to QuickBooks Desktop.%n%nClick Install to begin.
-FinishedLabel=ASI QuickBooks Middleware has been installed successfully.%n%nThe middleware will start automatically each time you log in. QuickBooks Desktop must be open and authorized before FileMaker can post invoices.
+FinishedLabel=ASI QuickBooks Middleware has been installed successfully.%n%nThe middleware will start automatically each time you log in. QuickBooks Desktop must be open and authorized before FileMaker can post invoices.%n%nInstall log: C:\Services\asi-qb-middleware\install.log
 ButtonInstall=Install
 
 [Files]
@@ -91,12 +91,14 @@ begin
       MsgBox(
         'Installation did not complete successfully.' + #13#10#13#10 +
         Status + #13#10#13#10 +
-        'Please contact your administrator and provide the error above.',
+        'Log file: ' + ExpandConstant('{usertmp}') + '\asi-qb-install.log' + #13#10#13#10 +
+        'Please send the log file to your administrator.',
         mbError, MB_OK);
   end else begin
     MsgBox(
       'Installation did not complete successfully (no result was recorded).' + #13#10#13#10 +
-      'Please contact your administrator.',
+      'Log file: ' + ExpandConstant('{usertmp}') + '\asi-qb-install.log' + #13#10#13#10 +
+      'Please send the log file to your administrator.',
       mbError, MB_OK);
   end;
 end;

@@ -25,8 +25,14 @@ param(
 Set-StrictMode -Off
 $ErrorActionPreference = "SilentlyContinue"
 
-$RepoPath = "C:\Services\asi-qb-middleware"
-$TaskName = "ASI QB Middleware"
+$RepoPath  = "C:\Services\asi-qb-middleware"
+$TaskName  = "ASI QB Middleware"
+$LogDir    = "C:\ProgramData\ASI QB Middleware"
+$LogFile   = "$LogDir\uninstall.log"
+
+# Write log to ProgramData so it survives the middleware directory deletion.
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+Start-Transcript -Path $LogFile -Force -ErrorAction SilentlyContinue
 
 function Write-Header($text) {
     Write-Host ""
@@ -200,7 +206,9 @@ if ($doGit) {
 
 Write-Host ""
 Write-Host "  Uninstall complete." -ForegroundColor Cyan
+Write-Host "  Log file: $LogFile" -ForegroundColor Gray
 Write-Host ""
+Stop-Transcript -ErrorAction SilentlyContinue
 if (-not $Silent) {
     Write-Host "Press any key to exit..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
