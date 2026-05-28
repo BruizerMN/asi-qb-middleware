@@ -399,7 +399,7 @@ def get_all_customers(expected_slug: str) -> list:
                 continue
             customers.append({
                 "list_id":        cust.findtext("ListID") or "",
-                "full_name":      cust.findtext("FullName") or "",
+                "full_name":      _ascii_safe(cust.findtext("FullName") or ""),
                 "account_number": account_number,
             })
 
@@ -481,7 +481,7 @@ def get_customer_by_account(account_number: str, bypass_cache: bool = False) -> 
                 continue
             c = {
                 "list_id":        cust.findtext("ListID") or "",
-                "full_name":      cust.findtext("FullName") or "",
+                "full_name":      _ascii_safe(cust.findtext("FullName") or ""),
                 "account_number": acct,
             }
             customers.append(c)
