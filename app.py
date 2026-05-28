@@ -19,6 +19,13 @@ except ImportError:
 def create_app():
     app = Flask(__name__)
 
+    # Send UTF-8 characters directly rather than \uXXXX JSON escape sequences.
+    # FileMaker 19 mishandles Unicode escapes for non-ASCII characters (e.g.
+    # ’ for the right single quote decodes to the Windows-1252 byte 0x92,
+    # a C1 control character, rather than the proper UTF-8 sequence). FM handles
+    # raw UTF-8 from Insert from URL correctly, so this avoids the mangling.
+    app.json.ensure_ascii = False
+
     db.init_db()
     app.register_blueprint(fm_bp)
 
