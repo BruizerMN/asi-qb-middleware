@@ -19,7 +19,8 @@ from .config import QB_COMPANY_FILES
 from .qbxml_builder import (
     _ascii_safe,
     build_company_query,
-    build_customer_query, build_customer_query_by_list_id, build_customer_add_job,
+    build_customer_query, build_customer_query_by_list_id,
+    build_customer_name_filter_query, build_customer_add_job,
     build_customer_list_query, build_item_list_query,
     build_item_query_by_name, build_terms_query, build_ship_method_query,
     build_invoice_query, ITEM_QUERY_TYPES,
@@ -209,6 +210,24 @@ def get_open_company() -> dict:
         _close_session(rp, ticket)
 
 
+def _find_job_list_id(rp, ticket, parent_list_id: str, job_name: str) -> str:
+    """Find an existing Customer:Job's ListID when FullName matching fails.
+
+    Uses a NameFilter query (matches the short Name field, not the full path)
+    and then filters results in Python by ParentRef/ListID. This sidesteps the
+    apostrophe-encoding mismatch that makes FullName queries unreliable.
+    """
+    safe_job = _ascii_safe(job_name).lower()
+    resp = rp.ProcessRequest(ticket, build_customer_name_filter_query(job_name))
+    root = ET.fromstring(resp)
+    for cust in root.findall(".//CustomerRet"):
+        if (cust.findtext("ParentRef/ListID") or "") == parent_list_id:
+            cust_name = _ascii_safe(cust.findtext("Name") or "").lower()
+            if cust_name == safe_job:
+                return cust.findtext("ListID") or ""
+    return ""
+
+
 def ensure_customer_job(
     customer_job_fullname: str,
     expected_slug: str,
@@ -299,20 +318,28 @@ def ensure_customer_job(
         resp = rp.ProcessRequest(ticket, build_customer_add_job(parent_list_id, job_name))
         root = ET.fromstring(resp)
         rs = root.find(".//CustomerAddRs")
+        job_name_used = (corrected_parent + ":" + job_name) if corrected_parent else customer_job_fullname
+
         if rs is not None:
             code = rs.get("statusCode", "0")
-            if code != "0":
+            if code == "0":
+                # Job created — extract its ListID from the response.
+                new_job_ret = root.find(".//CustomerRet")
+                new_job_list_id = new_job_ret.findtext("ListID") if new_job_ret is not None else ""
+                return job_name_used, (new_job_list_id or "")
+            elif code == "3100":
+                # Job already exists in QB but our FullName query couldn't find it
+                # (apostrophe encoding mismatch between FM and QB). Recover by
+                # searching for the job by Name field + parent ListID match.
+                existing_id = _find_job_list_id(rp, ticket, parent_list_id, job_name)
+                return job_name_used, existing_id
+            else:
                 msg = rs.get("statusMessage", "Unknown error")
                 raise RuntimeError(
                     f"QuickBooks rejected job creation for '{job_name}': {msg} (code {code})"
                 )
 
-        # Extract the new job's ListID from the CustomerAdd response.
-        new_job_ret = root.find(".//CustomerRet")
-        new_job_list_id = new_job_ret.findtext("ListID") if new_job_ret is not None else ""
-
-        job_name_used = (corrected_parent + ":" + job_name) if corrected_parent else customer_job_fullname
-        return job_name_used, (new_job_list_id or "")
+        return job_name_used, ""
 
     finally:
         _close_session(rp, ticket)

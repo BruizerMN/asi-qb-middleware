@@ -166,6 +166,21 @@ def build_customer_query(customer_name: str) -> str:
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 
+def build_customer_name_filter_query(name: str) -> str:
+    """Find customers/jobs whose Name field contains the given string.
+    Name is the last segment only (no parent prefix), so this works even
+    when the full FullName has apostrophe encoding issues.
+    Used to recover a job's ListID after a 3100 'already exists' error."""
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "CustomerQueryRq", requestID="1")
+    f = ET.SubElement(req, "NameFilter")
+    _text(f, "MatchCriterion", "Contains")
+    _text(f, "Name", _ascii_safe(name))
+    _text(req, "OwnerID", "0")
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
 def build_customer_query_by_list_id(list_id: str) -> str:
     """Look up a customer by QB ListID. Used as a fallback when a FullName
     query fails due to a stale name stored in FM — the ListID never changes
