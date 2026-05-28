@@ -14,10 +14,11 @@
 $ErrorActionPreference = "Stop"
 
 $RepoRoot    = Split-Path -Parent $PSScriptRoot
-$InstallerDir = Join-Path $RepoRoot "installer"
-$BundledEnv  = Join-Path $InstallerDir "bundled.env"
-$IssFile     = Join-Path $InstallerDir "setup.iss"
-$OutputDir   = Join-Path $InstallerDir "Output"
+$InstallerDir    = Join-Path $RepoRoot "installer"
+$BundledEnv      = Join-Path $InstallerDir "bundled.env"
+$IssFile         = Join-Path $InstallerDir "setup.iss"
+$IssUninstFile   = Join-Path $InstallerDir "setup-uninstall.iss"
+$OutputDir       = Join-Path $InstallerDir "Output"
 
 $ISSCCandidates = @(
     "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
@@ -120,14 +121,29 @@ if (Test-Path $OutputDir) {
     Write-OK "Output folder cleared"
 }
 
-Write-Step "Running ISCC..."
+Write-Step "Running ISCC for installer..."
 & $iscc /DMyAppVersion="$version" /DMyOutputName="$outputName" $IssFile
 if ($LASTEXITCODE -ne 0) { Abort "ISCC compilation failed (exit code $LASTEXITCODE)." }
 
 $outputExe = Join-Path $OutputDir "${outputName}.exe"
 if (-not (Test-Path $outputExe)) { Abort "Compilation reported success but output file not found: $outputExe" }
+$installerMB = [math]::Round((Get-Item $outputExe).Length / 1MB, 1)
+Write-OK "Installer compiled"
 
-$sizeMB = [math]::Round((Get-Item $outputExe).Length / 1MB, 1)
+# ---------------------------------------------------------------------------
+# Compile uninstaller
+# ---------------------------------------------------------------------------
+
+Write-Header "Compiling uninstaller"
+
+Write-Step "Running ISCC for uninstaller..."
+& $iscc /DMyAppVersion="$version" $IssUninstFile
+if ($LASTEXITCODE -ne 0) { Abort "ISCC uninstaller compilation failed (exit code $LASTEXITCODE)." }
+
+$uninstExe = Join-Path $OutputDir "ASI_FMQBsupport_Uninstall.exe"
+if (-not (Test-Path $uninstExe)) { Abort "Uninstaller compilation reported success but output file not found: $uninstExe" }
+$uninstallerMB = [math]::Round((Get-Item $uninstExe).Length / 1MB, 1)
+Write-OK "Uninstaller compiled"
 
 # ---------------------------------------------------------------------------
 # Done
@@ -135,14 +151,14 @@ $sizeMB = [math]::Round((Get-Item $outputExe).Length / 1MB, 1)
 
 Write-Host ""
 Write-Host "  =============================================" -ForegroundColor Green
-Write-Host "  Installer built successfully!" -ForegroundColor Green
+Write-Host "  Build complete!" -ForegroundColor Green
 Write-Host "  =============================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  File    : installer\Output\${outputName}.exe" -ForegroundColor White
-Write-Host "  Version : $version (Build $build)" -ForegroundColor White
-Write-Host "  Target  : $environment" -ForegroundColor White
-Write-Host "  Size    : $sizeMB MB" -ForegroundColor White
+Write-Host "  Installer  : installer\Output\${outputName}.exe ($installerMB MB)" -ForegroundColor White
+Write-Host "  Uninstaller: installer\Output\ASI_FMQBsupport_Uninstall.exe ($uninstallerMB MB)" -ForegroundColor White
+Write-Host "  Version    : $version (Build $build)" -ForegroundColor White
+Write-Host "  Target     : $environment" -ForegroundColor White
 Write-Host ""
-Write-Host "  Distribute this file to workstations." -ForegroundColor Gray
-Write-Host "  IT double-clicks to install -- no other steps needed." -ForegroundColor Gray
+Write-Host "  Distribute both files to workstations." -ForegroundColor Gray
+Write-Host "  IT double-clicks either one -- no other steps needed." -ForegroundColor Gray
 Write-Host ""

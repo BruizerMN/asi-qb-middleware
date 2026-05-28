@@ -16,7 +16,10 @@
 
 param(
     [switch]$RemovePython,
-    [switch]$RemoveGit
+    [switch]$RemoveGit,
+
+    # Suppress "Press any key to exit" -- used when running from the Inno Setup .exe.
+    [switch]$Silent
 )
 
 Set-StrictMode -Off
@@ -198,5 +201,7 @@ if ($doGit) {
 Write-Host ""
 Write-Host "  Uninstall complete." -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Press any key to exit..."
-$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+if (-not $Silent) {
+    Write-Host "Press any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+}
