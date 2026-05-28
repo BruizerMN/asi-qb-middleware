@@ -113,6 +113,7 @@ Write-Header "Python"
 # a redirect prompt instead of running Python. We validate by checking that
 # --version returns an actual version string (e.g. "Python 3.12.4").
 function Find-Python {
+    # Pass 1: check commands already on PATH.
     foreach ($cmd in @("py", "python", "python3")) {
         if (Command-Exists $cmd) {
             try {
@@ -122,6 +123,31 @@ function Find-Python {
                 # Command exists but failed or wrote to stderr (e.g. Windows 11
                 # Microsoft Store stub) -- not a real Python, try the next one.
             }
+        }
+    }
+    # Pass 2: check known installation directories.
+    # winget and the .exe installer sometimes register PATH asynchronously;
+    # the executable may be present before the registry PATH update is visible.
+    $knownDirs = @(
+        "$env:LOCALAPPDATA\Programs\Python\Python313",
+        "$env:LOCALAPPDATA\Programs\Python\Python312",
+        "$env:LOCALAPPDATA\Programs\Python\Python311",
+        "$env:ProgramFiles\Python313",
+        "$env:ProgramFiles\Python312",
+        "C:\Python313",
+        "C:\Python312"
+    )
+    foreach ($dir in $knownDirs) {
+        $exe = "$dir\python.exe"
+        if (Test-Path $exe) {
+            try {
+                $out = & $exe --version 2>&1
+                if ("$out" -match "Python \d+\.\d+") {
+                    # Add to the current session PATH so pip and later calls work.
+                    $env:Path = "$dir;$dir\Scripts;$env:Path"
+                    return $exe
+                }
+            } catch { }
         }
     }
     return $null
@@ -136,18 +162,20 @@ if ($pyCmd) {
     $wingetOk = $false
     if (Command-Exists "winget") {
         $wingetOk = Install-ViaWinget "Python.Python.3.12" "Python 3.12"
+        Start-Sleep -Seconds 3   # Give installer time to register PATH in registry
         Refresh-Path
     }
 
     if (-not $wingetOk) {
         if (Command-Exists "winget") { Write-Warn "winget install failed -- trying direct download..." }
         Install-ViaDownload $PythonInstallerUrl "Python 3.12.4" "/quiet InstallAllUsers=0 PrependPath=1 Include_test=0"
+        Start-Sleep -Seconds 3
         Refresh-Path
     }
 
     $pyCmd = Find-Python
     if (-not $pyCmd) {
-        Abort "Python installed but no working python command found on PATH. Close this window, reopen PowerShell, and re-run the installer."
+        Abort "Python installed but not found. Close this window, reopen PowerShell, and re-run the installer."
     }
     $pyver = & $pyCmd --version 2>&1
     Write-OK "Installed ($pyver)"
