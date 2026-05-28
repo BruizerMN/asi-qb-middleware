@@ -59,10 +59,18 @@ foreach ($key in @("API_KEY", "QB_FILE_ACOUSTICAL", "QB_FILE_ARCHITECTURAL")) {
         Abort "bundled.env is missing a value for: $key"
     }
 }
+
+# Read and validate ENVIRONMENT
+$envMatch = [regex]::Match($envContent, '(?m)^ENVIRONMENT\s*=\s*(.+)')
+if (-not $envMatch.Success) { Abort "bundled.env is missing ENVIRONMENT (must be DEV or PROD)." }
+$environment = $envMatch.Groups[1].Value.Trim().ToUpper()
+if ($environment -notin @("DEV", "PROD")) { Abort "ENVIRONMENT in bundled.env must be DEV or PROD (got: $environment)." }
+
 Write-OK "bundled.env present and populated"
+Write-OK "Environment: $environment"
 
 # ---------------------------------------------------------------------------
-# Read version from version.py
+# Read version and build number from version.py
 # ---------------------------------------------------------------------------
 
 Write-Header "Reading version"
@@ -74,7 +82,15 @@ $versionLine = Get-Content $versionFile | Where-Object { $_ -match '^VERSION\s*=
 $version = ($versionLine -replace '.*=\s*["\x27](.+)["\x27].*', '$1').Trim()
 if ([string]::IsNullOrWhiteSpace($version)) { Abort "Could not parse VERSION from version.py." }
 
-Write-OK "Version: $version"
+$buildLine = Get-Content $versionFile | Where-Object { $_ -match '^BUILD\s*=' } | Select-Object -First 1
+$build = ($buildLine -replace '.*=\s*["\x27](.+)["\x27].*', '$1').Trim()
+if ([string]::IsNullOrWhiteSpace($build)) { Abort "Could not parse BUILD from version.py." }
+
+$outputName = "ASI_FMQBsupport_${environment}_${build}"
+
+Write-OK "Version : $version"
+Write-OK "Build   : $build"
+Write-OK "Output  : ${outputName}.exe"
 
 # ---------------------------------------------------------------------------
 # Find Inno Setup compiler
@@ -98,10 +114,10 @@ Write-OK "Found: $iscc"
 Write-Header "Compiling installer"
 
 Write-Step "Running ISCC..."
-& $iscc /DMyAppVersion="$version" $IssFile
+& $iscc /DMyAppVersion="$version" /DMyOutputName="$outputName" $IssFile
 if ($LASTEXITCODE -ne 0) { Abort "ISCC compilation failed (exit code $LASTEXITCODE)." }
 
-$outputExe = Join-Path $OutputDir "ASI-QB-Middleware-Setup.exe"
+$outputExe = Join-Path $OutputDir "${outputName}.exe"
 if (-not (Test-Path $outputExe)) { Abort "Compilation reported success but output file not found: $outputExe" }
 
 $sizeMB = [math]::Round((Get-Item $outputExe).Length / 1MB, 1)
@@ -115,8 +131,9 @@ Write-Host "  =============================================" -ForegroundColor Gr
 Write-Host "  Installer built successfully!" -ForegroundColor Green
 Write-Host "  =============================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  File    : installer\Output\ASI-QB-Middleware-Setup.exe" -ForegroundColor White
-Write-Host "  Version : $version" -ForegroundColor White
+Write-Host "  File    : installer\Output\${outputName}.exe" -ForegroundColor White
+Write-Host "  Version : $version (Build $build)" -ForegroundColor White
+Write-Host "  Target  : $environment" -ForegroundColor White
 Write-Host "  Size    : $sizeMB MB" -ForegroundColor White
 Write-Host ""
 Write-Host "  Distribute this file to workstations." -ForegroundColor Gray
