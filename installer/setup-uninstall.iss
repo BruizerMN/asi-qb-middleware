@@ -46,20 +46,29 @@ Source: "..\scripts\uninstall.ps1"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Code]
 // Build the PowerShell parameter string based on which tasks were selected,
-// then run uninstall.ps1. Using [Code] instead of [Run] so we can construct
-// the parameters dynamically at runtime.
+// then run uninstall.ps1.
+//
+// IMPORTANT: must use ssPostInstall, not ssInstall.
+// ssInstall fires at the START of the install step, before files are extracted
+// to {tmp}. ssPostInstall fires after extraction is complete, so uninstall.ps1
+// is guaranteed to exist when we call it.
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  Params: String;
+  PSExe, Params: String;
   ResultCode: Integer;
 begin
-  if CurStep = ssInstall then begin
+  if CurStep = ssPostInstall then begin
+    // Use full path to avoid PATH lookup issues in Inno Setup's Pascal context.
+    PSExe := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
     Params := '-ExecutionPolicy Bypass -NoProfile -File "' +
               ExpandConstant('{tmp}\uninstall.ps1') + '" -Silent';
     if IsTaskSelected('removepython') then
       Params := Params + ' -RemovePython';
     if IsTaskSelected('removegit') then
       Params := Params + ' -RemoveGit';
-    Exec('powershell.exe', Params, '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
+    if not Exec(PSExe, Params, '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
+      MsgBox('Could not launch PowerShell. Uninstall may not have completed.' + #13#10 +
+             'Run scripts\uninstall.ps1 manually from the middleware directory.',
+             mbError, MB_OK);
   end;
 end;
