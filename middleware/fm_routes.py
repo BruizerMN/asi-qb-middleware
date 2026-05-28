@@ -84,12 +84,10 @@ def post_invoice():
                 customer_list_id = customer_data.get("list_id", "")
 
         try:
-            corrected_name = com.ensure_customer_job(
+            corrected_name, job_list_id = com.ensure_customer_job(
                 invoice.get("customer_name", ""), company, customer_list_id
             )
         except RuntimeError as e:
-            # Re-raise with route-level diagnostics so we can see what reached
-            # the middleware from FM. Distinguish missing key vs empty value.
             list_id_debug = (
                 "list_id=MISSING" if "customer_list_id" not in invoice
                 else f"list_id={customer_list_id!r}"
@@ -101,9 +99,15 @@ def post_invoice():
             raise RuntimeError(
                 f"{e} | route debug: {list_id_debug} {acct_debug}"
             )
+
+        # Apply any corrections ensure_customer_job made.
+        # customer_job_list_id lets build_invoice_add() use CustomerRef/ListID
+        # instead of FullName, bypassing apostrophe-encoding mismatches (error 3140).
+        invoice = dict(invoice)
         if corrected_name != invoice.get("customer_name", ""):
-            invoice = dict(invoice)  # don't mutate the original
             invoice["customer_name"] = corrected_name
+        if job_list_id:
+            invoice["customer_job_list_id"] = job_list_id
 
         qbxml = build_invoice_add(invoice)
         qb_invoice_id = com.submit_invoice(qbxml, company)

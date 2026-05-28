@@ -85,8 +85,13 @@ def build_invoice_add(payload: dict) -> str:
     req = ET.SubElement(msgs, "InvoiceAddRq", requestID="1")
     inv = ET.SubElement(req, "InvoiceAdd")
 
-    # QB SDK requires strict element order in InvoiceAdd
-    _text(inv, "CustomerRef/FullName", _ascii_safe(payload["customer_name"]))
+    # QB SDK requires strict element order in InvoiceAdd.
+    # Use ListID for CustomerRef when available — it's encoding-agnostic and
+    # avoids apostrophe mismatches (straight vs curly) that cause error 3140.
+    if payload.get("customer_job_list_id"):
+        _text(inv, "CustomerRef/ListID", payload["customer_job_list_id"])
+    else:
+        _text(inv, "CustomerRef/FullName", _ascii_safe(payload["customer_name"]))
 
     if payload.get("class_id"):
         _text(inv, "ClassRef/FullName", payload["class_id"])

@@ -249,8 +249,11 @@ def ensure_customer_job(
         # Check whether the job already exists under the (safe) name FM has.
         resp = rp.ProcessRequest(ticket, build_customer_query(safe_name))
         root = ET.fromstring(resp)
-        if root.find(".//CustomerRet") is not None:
-            return customer_job_fullname  # job exists, nothing to do
+        job_ret = root.find(".//CustomerRet")
+        if job_ret is not None:
+            # Job found — return its ListID so InvoiceAdd can use CustomerRef/ListID
+            # and avoid apostrophe-encoding mismatches with CustomerRef/FullName.
+            return customer_job_fullname, (job_ret.findtext("ListID") or "")
 
         # Job not found. Look up parent customer by FullName.
         resp = rp.ProcessRequest(ticket, build_customer_query(parent_safe))
@@ -271,11 +274,11 @@ def ensure_customer_job(
                 corrected_job = corrected_parent + ":" + job_name
                 resp2 = rp.ProcessRequest(ticket, build_customer_query(corrected_job))
                 root2 = ET.fromstring(resp2)
-                if root2.find(".//CustomerRet") is not None:
-                    return corrected_job  # job exists under corrected name
+                job_ret2 = root2.find(".//CustomerRet")
+                if job_ret2 is not None:
+                    return corrected_job, (job_ret2.findtext("ListID") or "")
 
         if parent_ret is None:
-            # Include debug info so we can tell whether the ListID fallback ran.
             list_id_info = (
                 f"ListID tried: {customer_list_id!r}" if customer_list_id
                 else "no customer_list_id in payload"
@@ -304,11 +307,12 @@ def ensure_customer_job(
                     f"QuickBooks rejected job creation for '{job_name}': {msg} (code {code})"
                 )
 
-        # Return the name the InvoiceAdd should use. If the ListID fallback found a
-        # corrected parent name, use that — otherwise use the original safe name.
-        if corrected_parent:
-            return corrected_parent + ":" + job_name
-        return customer_job_fullname
+        # Extract the new job's ListID from the CustomerAdd response.
+        new_job_ret = root.find(".//CustomerRet")
+        new_job_list_id = new_job_ret.findtext("ListID") if new_job_ret is not None else ""
+
+        job_name_used = (corrected_parent + ":" + job_name) if corrected_parent else customer_job_fullname
+        return job_name_used, (new_job_list_id or "")
 
     finally:
         _close_session(rp, ticket)
