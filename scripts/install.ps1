@@ -1,10 +1,22 @@
 # ASI QuickBooks Middleware -- Workstation Installer
 #
-# USB / network share:
+# Normal use (via Inno Setup installer):
+#   Double-click ASI-QB-Middleware-Setup.exe  -- no parameters needed
+#
+# Manual use:
 #   Right-click this file and choose "Run with PowerShell"
 #   (or: powershell -ExecutionPolicy Bypass -File .\install.ps1)
 #
 # Safe to re-run -- updates repo, dependencies, and task registration in place.
+
+param(
+    # Path to a pre-populated .env file bundled by the Inno Setup installer.
+    # When provided, skips interactive prompts and uses this config directly.
+    [string]$BundledEnvPath = "",
+
+    # Suppress "Press any key to exit" prompts -- used when running from installer.
+    [switch]$Silent
+)
 
 Set-StrictMode -Off
 $ErrorActionPreference = "Stop"
@@ -36,8 +48,10 @@ function Abort($text) {
     Write-Host ""
     Write-Host "  FAILED: $text" -ForegroundColor Red
     Write-Host ""
-    Write-Host "Press any key to exit..."
-    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    if (-not $Silent) {
+        Write-Host "Press any key to exit..."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    }
     exit 1
 }
 
@@ -190,7 +204,15 @@ $EnvFile = "$RepoPath\.env"
 
 Write-Header "Configuration"
 
-if (Test-Path $EnvFile) {
+if ($BundledEnvPath -ne "" -and (Test-Path $BundledEnvPath)) {
+    # Running from Inno Setup installer -- use the pre-populated .env bundled at build time.
+    # Always overwrite so a new installer can push updated config (e.g. production cutover).
+    Write-Step "Installing bundled configuration..."
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $False
+    $envContent = [System.IO.File]::ReadAllText($BundledEnvPath)
+    [System.IO.File]::WriteAllText($EnvFile, $envContent, $utf8NoBom)
+    Write-OK ".env installed from bundled config"
+} elseif (Test-Path $EnvFile) {
     Write-OK ".env already exists -- skipping"
 } else {
     Write-Host ""
@@ -204,7 +226,6 @@ if (Test-Path $EnvFile) {
 
     Write-Host ""
     Write-Host "  QuickBooks company file paths (on the Q: drive, include .QBW extension)." -ForegroundColor White
-    Write-Host "  These are the TEST company files for now -- update .env at production cutover." -ForegroundColor Yellow
     Write-Host ""
     $qbFileAcoustical    = Read-Host "  QB_FILE_ACOUSTICAL (Acoustical Surfaces)"
     $qbFileArchitectural = Read-Host "  QB_FILE_ARCHITECTURAL (Architectural Surfaces)"
@@ -318,5 +339,7 @@ if ($running) {
 Write-Host ""
 Write-Host "  All done! The middleware will start automatically at each logon." -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Press any key to exit..."
-$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+if (-not $Silent) {
+    Write-Host "Press any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+}

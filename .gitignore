@@ -3,3 +3,7 @@ venv/
 *.pyc
 __pycache__/
 *.db
+
+# Installer -- bundled.env contains secrets; Output/ is build artifacts
+installer/bundled.env
+installer/Output/
