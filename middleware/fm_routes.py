@@ -477,6 +477,26 @@ def list_terms():
         return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
 
 
+@bp.post("/validate-rep")
+@require_api_key
+def validate_rep():
+    """Validate that a sales rep name (initials) exists in QB."""
+    data = request.get_json(force=True, silent=True) or {}
+    rep_name = (data.get("rep_name") or "").strip()
+    if not rep_name:
+        return jsonify({"status": "error", "error": "rep_name is required"}), 400
+    try:
+        reps = com.get_all_sales_reps()
+        initials = {r["initials"].upper() for r in reps}
+        if rep_name.upper() in initials:
+            return jsonify({"status": "ok"})
+        return jsonify({"status": "error", "error": f"Sales rep '{rep_name}' not found in QuickBooks."}), 422
+    except RuntimeError as e:
+        return jsonify({"status": "error", "error": str(e)}), 422
+    except Exception as e:
+        return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+
+
 @bp.post("/ping")
 @require_api_key
 def ping():

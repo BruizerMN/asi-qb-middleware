@@ -23,7 +23,7 @@ from .qbxml_builder import (
     build_customer_name_filter_query, build_customer_add_job,
     build_customer_list_query, build_item_list_query,
     build_item_query_by_name, build_terms_query, build_ship_method_query,
-    build_invoice_query, ITEM_QUERY_TYPES,
+    build_sales_rep_query, build_invoice_query, ITEM_QUERY_TYPES,
 )
 
 APP_NAME = "ASI QB Middleware"
@@ -600,6 +600,20 @@ def get_all_terms() -> list:
                 "discount_pct":   t.findtext("DiscountPct") or "",
             })
         return terms
+    finally:
+        _close_session(rp, ticket)
+
+
+def get_all_sales_reps() -> list:
+    """Return all active QB sales reps as a list of {initials} dicts."""
+    rp, ticket = _open_session()
+    try:
+        response = rp.ProcessRequest(ticket, build_sales_rep_query())
+        root = ET.fromstring(response)
+        return [
+            {"initials": r.findtext("Initial") or ""}
+            for r in root.findall(".//SalesRepRet")
+        ]
     finally:
         _close_session(rp, ticket)
 
