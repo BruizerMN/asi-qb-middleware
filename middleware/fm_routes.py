@@ -20,6 +20,7 @@ from flask import Blueprint, request, jsonify
 
 from middleware.config import API_KEY
 from middleware.qbxml_builder import build_invoice_add
+from middleware import logger
 import middleware.com_handler as com
 
 bp = Blueprint("fm", __name__, url_prefix="/fm")
@@ -65,6 +66,9 @@ def post_invoice():
     if not invoice:
         return jsonify({"status": "error", "error": "invoice payload is required"}), 400
 
+    _log  = {"order_id": order_id, "company": company, "status": "error"}
+    _qbxml = ""
+
     try:
         # Ensure Customer:Job exists before submitting — QB won't auto-create it.
         # ensure_customer_job returns the name to use in InvoiceAdd: normally the
@@ -109,17 +113,28 @@ def post_invoice():
         if job_list_id:
             invoice["customer_job_list_id"] = job_list_id
 
-        qbxml = build_invoice_add(invoice)
+        qbxml  = build_invoice_add(invoice)
+        _qbxml = qbxml  # capture for error logging before submitting
+
         qb_invoice_id = com.submit_invoice(qbxml, company)
+        _log.update({"status": "ok", "qb_invoice_id": qb_invoice_id})
         return jsonify({
             "status": "ok",
             "qb_invoice_id": qb_invoice_id,
             "order_id": str(order_id),
         })
     except RuntimeError as e:
+        _log["error"] = str(e)
+        if _qbxml:
+            logger.log_invoice_error(str(order_id), company, _qbxml, str(e))
         return jsonify({"status": "error", "error": str(e)}), 422
     except Exception as e:
+        _log["error"] = f"Unexpected error: {e}"
+        if _qbxml:
+            logger.log_invoice_error(str(order_id), company, _qbxml, str(e))
         return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+    finally:
+        logger.log_event("invoice_post", **_log)
 
 
 @bp.post("/sync-customers")
@@ -137,17 +152,24 @@ def sync_customers():
     """
     data    = request.get_json(force=True, silent=True) or {}
     company = data.get("company", "").lower()
+    _log    = {"company": company or "auto-detect", "status": "error"}
 
     try:
         if company not in ("acoustical", "architectural"):
             company = com.detect_open_slug()
+        _log["company"] = company
         customers = com.get_all_customers(company)
         lookup = {c["account_number"]: {"list_id": c["list_id"], "full_name": c["full_name"]} for c in customers}
+        _log.update({"status": "ok", "count": len(customers)})
         return jsonify({"status": "ok", "count": len(customers), "lookup": lookup})
     except RuntimeError as e:
+        _log["error"] = str(e)
         return jsonify({"status": "error", "error": str(e)}), 422
     except Exception as e:
+        _log["error"] = f"Unexpected error: {e}"
         return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+    finally:
+        logger.log_event("sync_customers", **_log)
 
 
 @bp.post("/sync-items")
@@ -165,17 +187,24 @@ def sync_items():
     """
     data    = request.get_json(force=True, silent=True) or {}
     company = data.get("company", "").lower()
+    _log    = {"company": company or "auto-detect", "status": "error"}
 
     try:
         if company not in ("acoustical", "architectural"):
             company = com.detect_open_slug()
-        items = com.get_all_items(company)
+        _log["company"] = company
+        items  = com.get_all_items(company)
         lookup = {item["name"]: item["list_id"] for item in items}
+        _log.update({"status": "ok", "count": len(items)})
         return jsonify({"status": "ok", "count": len(items), "lookup": lookup})
     except RuntimeError as e:
+        _log["error"] = str(e)
         return jsonify({"status": "error", "error": str(e)}), 422
     except Exception as e:
+        _log["error"] = f"Unexpected error: {e}"
         return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+    finally:
+        logger.log_event("sync_items", **_log)
 
 
 @bp.post("/sync-customer")
@@ -197,17 +226,25 @@ def sync_customer():
     if not account_number:
         return jsonify({"status": "error", "error": "account_number is required"}), 400
 
+    _log = {"account_number": account_number, "status": "error"}
+
     try:
         # bypass_cache=True: a sync must always fetch current data from QB.
         # The cache exists for performance on the invoice path — not for syncs.
         customer = com.get_customer_by_account(account_number, bypass_cache=True)
         if customer is None:
+            _log["status"] = "not_found"
             return jsonify({"status": "not_found", "account_number": account_number})
+        _log.update({"status": "ok", "list_id": customer.get("list_id", "")})
         return jsonify({"status": "ok", "customer": customer})
     except RuntimeError as e:
+        _log["error"] = str(e)
         return jsonify({"status": "error", "error": str(e)}), 422
     except Exception as e:
+        _log["error"] = f"Unexpected error: {e}"
         return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+    finally:
+        logger.log_event("sync_customer", **_log)
 
 
 @bp.post("/sync-item")
@@ -229,15 +266,23 @@ def sync_item():
     if not item_name:
         return jsonify({"status": "error", "error": "item_name is required"}), 400
 
+    _log = {"item_name": item_name, "status": "error"}
+
     try:
         item = com.get_item_by_name(item_name)
         if item is None:
+            _log["status"] = "not_found"
             return jsonify({"status": "not_found", "item_name": item_name})
+        _log.update({"status": "ok", "list_id": item.get("list_id", "")})
         return jsonify({"status": "ok", "item": item})
     except RuntimeError as e:
+        _log["error"] = str(e)
         return jsonify({"status": "error", "error": str(e)}), 422
     except Exception as e:
+        _log["error"] = f"Unexpected error: {e}"
         return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+    finally:
+        logger.log_event("sync_item", **_log)
 
 
 @bp.post("/ping-customer")
@@ -261,6 +306,35 @@ def ping_customer():
         return jsonify({"status": "error", "error": str(e)}), 422
     except Exception as e:
         return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+
+
+@bp.post("/validate-rep")
+@require_api_key
+def validate_rep():
+    """Validate that a sales rep name (initials) exists in QB."""
+    data     = request.get_json(force=True, silent=True) or {}
+    rep_name = (data.get("rep_name") or "").strip()
+    if not rep_name:
+        return jsonify({"status": "error", "error": "rep_name is required"}), 400
+
+    _log = {"rep_name": rep_name, "status": "error"}
+
+    try:
+        reps     = com.get_all_sales_reps()
+        initials = {r["initials"].upper() for r in reps}
+        if rep_name.upper() in initials:
+            _log["status"] = "ok"
+            return jsonify({"status": "ok"})
+        _log["error"] = f"Sales rep '{rep_name}' not found in QuickBooks."
+        return jsonify({"status": "error", "error": _log["error"]}), 422
+    except RuntimeError as e:
+        _log["error"] = str(e)
+        return jsonify({"status": "error", "error": str(e)}), 422
+    except Exception as e:
+        _log["error"] = f"Unexpected error: {e}"
+        return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+    finally:
+        logger.log_event("validate_rep", **_log)
 
 
 @bp.post("/debug-invoice")
@@ -471,26 +545,6 @@ def list_terms():
     try:
         terms = com.get_all_terms()
         return jsonify({"status": "ok", "count": len(terms), "terms": terms})
-    except RuntimeError as e:
-        return jsonify({"status": "error", "error": str(e)}), 422
-    except Exception as e:
-        return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
-
-
-@bp.post("/validate-rep")
-@require_api_key
-def validate_rep():
-    """Validate that a sales rep name (initials) exists in QB."""
-    data = request.get_json(force=True, silent=True) or {}
-    rep_name = (data.get("rep_name") or "").strip()
-    if not rep_name:
-        return jsonify({"status": "error", "error": "rep_name is required"}), 400
-    try:
-        reps = com.get_all_sales_reps()
-        initials = {r["initials"].upper() for r in reps}
-        if rep_name.upper() in initials:
-            return jsonify({"status": "ok"})
-        return jsonify({"status": "error", "error": f"Sales rep '{rep_name}' not found in QuickBooks."}), 422
     except RuntimeError as e:
         return jsonify({"status": "error", "error": str(e)}), 422
     except Exception as e:
