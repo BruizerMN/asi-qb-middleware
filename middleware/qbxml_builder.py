@@ -22,9 +22,7 @@ Expected payload structure (all fields are strings unless noted):
     "ship_to_zip": "55401",
     "tax_amount": "45.00",            # pre-calculated by FM/Avalara
     "freight_amount": "12.50",
-    "amount_paid": "557.50",
-    "payment_method": "Visa",         # optional
-    "salesperson": "Jane Smith",      # optional
+    "salesperson": "Jane Smith",      # optional — QB rep initials
     "bill_to_name":  "Acme Corp",       # optional — billing address
     "bill_to_addr1": "123 Main St",
     "bill_to_addr2": "",
@@ -205,15 +203,6 @@ def build_customer_add_job(parent_list_id: str, job_name: str) -> str:
     cust = ET.SubElement(req, "CustomerAdd")
     _text(cust, "Name", _ascii_safe(job_name))
     _text(cust, "ParentRef/ListID", parent_list_id)
-    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
-
-
-def build_item_query(item_name: str) -> str:
-    """Check if an item exists in QB by full name."""
-    root = ET.Element("QBXML")
-    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
-    req = ET.SubElement(msgs, "ItemNonInventoryQueryRq", requestID="1")
-    _text(req, "FullName", item_name)
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 

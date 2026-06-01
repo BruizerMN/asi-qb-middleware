@@ -232,7 +232,7 @@ def ensure_customer_job(
     customer_job_fullname: str,
     expected_slug: str,
     customer_list_id: str = "",
-) -> str:
+) -> tuple[str, str]:
     """
     Ensure a Customer:Job (sub-customer) exists in QB. Creates it if missing.
 
@@ -543,7 +543,6 @@ def lookup_customer_by_list_id(list_id: str) -> dict:
     """
     rp, ticket = _open_session()
     try:
-        import xml.etree.ElementTree as ET
         resp = rp.ProcessRequest(ticket, build_customer_query_by_list_id(list_id))
         root = ET.fromstring(resp)
         rs = root.find(".//CustomerQueryRs")

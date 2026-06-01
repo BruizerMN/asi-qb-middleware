@@ -4,7 +4,6 @@ Receives invoice jobs from FileMaker and submits them to QuickBooks via COM/QBFC
 """
 
 from flask import Flask
-import middleware.db as db
 from middleware.fm_routes import bp as fm_bp
 from middleware.config import PORT
 from version import VERSION, BUILD
@@ -26,7 +25,6 @@ def create_app():
     # raw UTF-8 from Insert from URL correctly, so this avoids the mangling.
     app.json.ensure_ascii = False
 
-    db.init_db()
     app.register_blueprint(fm_bp)
 
     @app.get("/health")
