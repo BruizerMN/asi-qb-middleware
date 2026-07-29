@@ -383,6 +383,17 @@ def build_invoice_query(ref_number: str) -> str:
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 
+def build_sales_order_query(ref_number: str) -> str:
+    """Return a SalesOrderQueryRq by RefNumber (QB sales order number)."""
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "SalesOrderQueryRq", requestID="1")
+    _text(req, "RefNumber", ref_number)
+    _text(req, "IncludeLineItems", "true")
+    _text(req, "OwnerID", "0")
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
 def build_ship_method_query() -> str:
     """Return a ShipMethodQueryRq for all active shipping methods."""
     root = ET.Element("QBXML")
