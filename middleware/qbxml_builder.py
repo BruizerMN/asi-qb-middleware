@@ -7,7 +7,9 @@ the qbXML string that QuickBooks Web Connector feeds to QB Desktop.
 Expected payload structure (all fields are strings unless noted):
 {
     "customer_name": "Acme Corp",
-    "order_id": "12345",              # required — becomes QB RefNumber (Ref No. / Invoice # / SO #)
+    "po_number": "12345",             # required — actually the FM order ID, becomes QB RefNumber
+                                       # (Ref No. / Invoice # / SO #). Misleadingly named for
+                                       # historical reasons; NOT the customer's PO (see cust_po).
     "order_date": "2026-05-05",       # YYYY-MM-DD
     "ship_date": "2026-05-10",        # YYYY-MM-DD, optional
     "cust_po": "PO-9876",             # optional — QB PONumber (P.O. No. field)
@@ -97,7 +99,9 @@ def build_invoice_add(payload: dict) -> str:
 
     # RefNumber is the QB-visible Invoice #/Ref No. — must be the FM Order ID,
     # not the customer's PO, so ASI's order number and QB's doc number match.
-    _text(inv, "RefNumber", _ascii_safe(str(payload["order_id"])))
+    # NOTE: payload key is "po_number" despite the name — FM sends the order ID
+    # under that key; there is no "order_id" key in the actual payload.
+    _text(inv, "RefNumber", _ascii_safe(str(payload["po_number"])))
 
     _build_bill_to(inv, payload)
     _build_ship_to(inv, payload)
@@ -180,7 +184,9 @@ def build_sales_order_add(payload: dict) -> str:
 
     # RefNumber is the QB-visible SO # — the FM Order ID, so it matches the
     # ASI order number Cat sees on her side (same convention as InvoiceAdd).
-    _text(so, "RefNumber", _ascii_safe(str(payload["order_id"])))
+    # NOTE: payload key is "po_number" despite the name — FM sends the order ID
+    # under that key; there is no "order_id" key in the actual payload.
+    _text(so, "RefNumber", _ascii_safe(str(payload["po_number"])))
 
     _build_bill_to(so, payload)
     _build_ship_to(so, payload)
