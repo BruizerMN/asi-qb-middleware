@@ -6,6 +6,7 @@ FileMaker uses Insert from URL to call these. All requests must include:
 
 Endpoints:
     POST /fm/invoice        — submit an invoice to QuickBooks (synchronous via COM)
+    POST /fm/sales-order    — submit a sales order to QuickBooks (synchronous via COM)
     POST /fm/ping           — verify QB is running and check which company is open
     POST /fm/sync-customers — return all active QB customers for FM to match and store
     POST /fm/sync-items     — return all active QB items for FM to match and store
@@ -19,7 +20,7 @@ from functools import wraps
 from flask import Blueprint, request, jsonify
 
 from middleware.config import API_KEY
-from middleware.qbxml_builder import build_invoice_add
+from middleware.qbxml_builder import build_invoice_add, build_sales_order_add
 from middleware import logger
 import middleware.com_handler as com
 
@@ -135,6 +136,107 @@ def post_invoice():
         return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
     finally:
         logger.log_event("invoice_post", **_log)
+
+
+@bp.post("/sales-order")
+@require_api_key
+def post_sales_order():
+    """
+    FM posts a JSON sales order payload here. Submits synchronously to QB via COM.
+
+    Mirrors post_invoice() exactly, just builds/submits a SalesOrderAdd instead
+    of an InvoiceAdd. Added 2026-07-28 per Cat's request — same flow as AE (QB
+    Desktop Sales Order, converted to an Invoice by Cat's team inside QB
+    afterward). Not yet tested against a live QB Desktop session.
+
+    Required fields:
+        company     — "acoustical" or "architectural"
+        order_id    — FM order ID (included in response for FM to match)
+        sales_order — sales order dict (see qbxml_builder.py build_invoice_add
+                      docstring for schema — build_sales_order_add takes the
+                      same shape)
+
+    Returns:
+        {"status": "ok",    "qb_so_number": "1042", "order_id": "..."}
+        {"status": "error", "error": "..."}
+    """
+    data = request.get_json(force=True, silent=True)
+    if not data:
+        return jsonify({"status": "error", "error": "Invalid JSON"}), 400
+
+    company = data.get("company", "").lower()
+    if company not in ("acoustical", "architectural"):
+        return jsonify({"status": "error", "error": "company must be 'acoustical' or 'architectural'"}), 400
+
+    order_id = data.get("order_id")
+    if not order_id:
+        return jsonify({"status": "error", "error": "order_id is required"}), 400
+
+    sales_order = data.get("sales_order")
+    if not sales_order:
+        return jsonify({"status": "error", "error": "sales_order payload is required"}), 400
+
+    _log  = {"order_id": order_id, "company": company, "status": "error"}
+    _qbxml = ""
+
+    try:
+        # Ensure Customer:Job exists before submitting — same requirement as
+        # InvoiceAdd; QB won't auto-create it for SalesOrderAdd either.
+        customer_list_id    = sales_order.get("customer_list_id", "")
+        customer_account_no = sales_order.get("customer_account_number", "")
+
+        if not customer_list_id and customer_account_no:
+            customer_data = com.get_customer_by_account(
+                customer_account_no, bypass_cache=True
+            )
+            if customer_data:
+                customer_list_id = customer_data.get("list_id", "")
+
+        try:
+            corrected_name, job_list_id = com.ensure_customer_job(
+                sales_order.get("customer_name", ""), company, customer_list_id
+            )
+        except RuntimeError as e:
+            list_id_debug = (
+                "list_id=MISSING" if "customer_list_id" not in sales_order
+                else f"list_id={customer_list_id!r}"
+            )
+            acct_debug = (
+                "acct=MISSING" if "customer_account_number" not in sales_order
+                else f"acct={customer_account_no!r}"
+            )
+            raise RuntimeError(
+                f"{e} | route debug: {list_id_debug} {acct_debug}"
+            )
+
+        sales_order = dict(sales_order)
+        if corrected_name != sales_order.get("customer_name", ""):
+            sales_order["customer_name"] = corrected_name
+        if job_list_id:
+            sales_order["customer_job_list_id"] = job_list_id
+
+        qbxml  = build_sales_order_add(sales_order)
+        _qbxml = qbxml  # capture for error logging before submitting
+
+        qb_so_number = com.submit_sales_order(qbxml, company)
+        _log.update({"status": "ok", "qb_so_number": qb_so_number})
+        return jsonify({
+            "status": "ok",
+            "qb_so_number": qb_so_number,
+            "order_id": str(order_id),
+        })
+    except RuntimeError as e:
+        _log["error"] = str(e)
+        if _qbxml:
+            logger.log_invoice_error(str(order_id), company, _qbxml, str(e))
+        return jsonify({"status": "error", "error": str(e)}), 422
+    except Exception as e:
+        _log["error"] = f"Unexpected error: {e}"
+        if _qbxml:
+            logger.log_invoice_error(str(order_id), company, _qbxml, str(e))
+        return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+    finally:
+        logger.log_event("sales_order_post", **_log)
 
 
 @bp.post("/sync-customers")

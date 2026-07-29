@@ -7,11 +7,10 @@ the qbXML string that QuickBooks Web Connector feeds to QB Desktop.
 Expected payload structure (all fields are strings unless noted):
 {
     "customer_name": "Acme Corp",
-    "order_id": "12345",
+    "order_id": "12345",              # required — becomes QB RefNumber (Ref No. / Invoice # / SO #)
     "order_date": "2026-05-05",       # YYYY-MM-DD
     "ship_date": "2026-05-10",        # YYYY-MM-DD, optional
-    "cust_po": "PO-9876",             # optional — QB RefNumber (Ref No. / Invoice #)
-    "po_number": "ORD-12345",         # optional — QB PONumber (P.O. No. field); use FM OrderID
+    "cust_po": "PO-9876",             # optional — QB PONumber (P.O. No. field)
     "class_id": "80000001-1234567",   # optional — QB Class ListID for segment reporting
     "ship_via": "UPS Ground",         # optional
     "ship_to_name": "Acme Corp",
@@ -96,14 +95,15 @@ def build_invoice_add(payload: dict) -> str:
 
     _text(inv, "TxnDate", payload["order_date"])
 
-    if payload.get("cust_po"):
-        _text(inv, "RefNumber", _ascii_safe(payload["cust_po"]))
+    # RefNumber is the QB-visible Invoice #/Ref No. — must be the FM Order ID,
+    # not the customer's PO, so ASI's order number and QB's doc number match.
+    _text(inv, "RefNumber", _ascii_safe(str(payload["order_id"])))
 
     _build_bill_to(inv, payload)
     _build_ship_to(inv, payload)
 
-    if payload.get("po_number"):
-        _text(inv, "PONumber", _ascii_safe(payload["po_number"]))
+    if payload.get("cust_po"):
+        _text(inv, "PONumber", _ascii_safe(payload["cust_po"]))
 
     if payload.get("terms"):
         _text(inv, "TermsRef/FullName", _ascii_safe(payload["terms"]))
@@ -144,6 +144,87 @@ def build_invoice_add(payload: dict) -> str:
     # We use a non-taxable item "Sales Tax" to record the Avalara-calculated amount.
     if payload.get("tax_amount") and float(payload["tax_amount"]) != 0:
         tax_li = ET.SubElement(inv, "InvoiceLineAdd")
+        _text(tax_li, "ItemRef/FullName", "Sales Tax")
+        _text(tax_li, "Desc", "Sales Tax (Avalara)")
+        _text(tax_li, "Quantity", "1")
+        _text(tax_li, "Rate", str(payload["tax_amount"]))
+
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
+def build_sales_order_add(payload: dict) -> str:
+    """Return a complete qbXML SalesOrderAdd request string.
+
+    Same payload shape as build_invoice_add(). SalesOrderAdd mirrors
+    InvoiceAdd's schema closely (CustomerRef, ClassRef, TxnDate, RefNumber,
+    BillAddress, ShipAddress, PONumber, TermsRef, SalesRepRef, ShipDate,
+    ShipMethodRef, Memo, line adds) — the element order below follows the
+    same sequence already confirmed working for InvoiceAdd. Not yet
+    verified live against QB Desktop; confirm element order/acceptance on
+    first real test before relying on it.
+    """
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "SalesOrderAddRq", requestID="1")
+    so = ET.SubElement(req, "SalesOrderAdd")
+
+    if payload.get("customer_job_list_id"):
+        _text(so, "CustomerRef/ListID", payload["customer_job_list_id"])
+    else:
+        _text(so, "CustomerRef/FullName", _ascii_safe(payload["customer_name"]))
+
+    if payload.get("class_id"):
+        _text(so, "ClassRef/FullName", payload["class_id"])
+
+    _text(so, "TxnDate", payload["order_date"])
+
+    # RefNumber is the QB-visible SO # — the FM Order ID, so it matches the
+    # ASI order number Cat sees on her side (same convention as InvoiceAdd).
+    _text(so, "RefNumber", _ascii_safe(str(payload["order_id"])))
+
+    _build_bill_to(so, payload)
+    _build_ship_to(so, payload)
+
+    if payload.get("cust_po"):
+        _text(so, "PONumber", _ascii_safe(payload["cust_po"]))
+
+    if payload.get("terms"):
+        _text(so, "TermsRef/FullName", _ascii_safe(payload["terms"]))
+
+    if payload.get("rep_name"):
+        _text(so, "SalesRepRef/FullName", _ascii_safe(payload["rep_name"]))
+
+    if payload.get("ship_date"):
+        _text(so, "ShipDate", payload["ship_date"])
+
+    if payload.get("ship_via"):
+        _text(so, "ShipMethodRef/FullName", _ascii_safe(payload["ship_via"]))
+
+    if payload.get("memo"):
+        _text(so, "Memo", _ascii_safe(payload["memo"]))
+
+    # Line items (skip any marked exclude=True)
+    for item in payload.get("line_items", []):
+        if item.get("exclude"):
+            continue
+        li = ET.SubElement(so, "SalesOrderLineAdd")
+        _text(li, "ItemRef/FullName", _ascii_safe(item["item_name"]))
+        if item.get("description"):
+            _text(li, "Desc", _ascii_safe(item["description"]))
+        _text(li, "Quantity", str(item["quantity"]))
+        _text(li, "Rate", str(item["unit_price"]))
+
+    # Freight as a separate line item (same convention as InvoiceAdd)
+    if payload.get("freight_amount") and float(payload["freight_amount"]) != 0:
+        freight_li = ET.SubElement(so, "SalesOrderLineAdd")
+        _text(freight_li, "ItemRef/FullName", "Freight")
+        _text(freight_li, "Desc", "Shipping & Handling")
+        _text(freight_li, "Quantity", "1")
+        _text(freight_li, "Rate", str(payload["freight_amount"]))
+
+    # Tax — passed as a pre-calculated amount via a tax item, same as InvoiceAdd
+    if payload.get("tax_amount") and float(payload["tax_amount"]) != 0:
+        tax_li = ET.SubElement(so, "SalesOrderLineAdd")
         _text(tax_li, "ItemRef/FullName", "Sales Tax")
         _text(tax_li, "Desc", "Sales Tax (Avalara)")
         _text(tax_li, "Quantity", "1")

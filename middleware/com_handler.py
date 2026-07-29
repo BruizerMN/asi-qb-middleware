@@ -393,6 +393,54 @@ def submit_invoice(qbxml: str, expected_slug: str) -> str:
         _close_session(rp, ticket)
 
 
+def submit_sales_order(qbxml: str, expected_slug: str) -> str:
+    """
+    Verify the correct QB company file is open, then submit a SalesOrderAdd.
+    Returns the QB sales order number (RefNumber) on success.
+    Raises RuntimeError with a user-friendly message on any failure.
+
+    Mirrors submit_invoice() exactly, just checking SalesOrderAddRs instead
+    of InvoiceAddRs. Not yet tested against a live QB Desktop session.
+    """
+    rp, ticket = _open_session()
+    try:
+        info = _get_company_info(rp, ticket)
+        verify_company(info, expected_slug)
+
+        response = rp.ProcessRequest(ticket, qbxml)
+
+        root = ET.fromstring(response)
+        rs = root.find(".//SalesOrderAddRs")
+
+        if rs is None:
+            raise RuntimeError("No SalesOrderAddRs in QB response.")
+
+        status_code = rs.get("statusCode", "")
+        status_msg  = rs.get("statusMessage", "")
+
+        if status_code != "0":
+            raise RuntimeError(
+                f"QuickBooks rejected the sales order: {status_msg} (code {status_code})"
+            )
+
+        txn_number = rs.findtext(".//TxnNumber")
+        ref_number = rs.findtext(".//RefNumber")
+        txn_id     = rs.findtext(".//TxnID")
+
+        # Return whichever identifier QB provided — prefer RefNumber (user-visible)
+        so_number = ref_number or txn_number or txn_id
+        if not so_number:
+            raise RuntimeError(
+                f"Sales order was created in QuickBooks but no SO number was returned. "
+                f"Response: {ET.tostring(rs, encoding='unicode')}"
+            )
+
+        return so_number
+
+    finally:
+        _close_session(rp, ticket)
+
+
 def get_all_customers(expected_slug: str) -> list:
     """
     Return all active top-level QB customers as a list of dicts.
