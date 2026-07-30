@@ -321,9 +321,15 @@ def sync_customer():
         account_number — FM customerID value (e.g. "C-107391")
 
     Returns:
-        {"status": "ok",        "customer": {"list_id": "...", "full_name": "...", "account_number": "..."}}
+        {"status": "ok",        "customer": {"list_id": "...", "full_name": "...", "account_number": "...", "is_active": true}}
+        {"status": "inactive",  "customer": {...same shape, "is_active": false}}
         {"status": "not_found", "account_number": "..."}
         {"status": "error",     "error": "..."}
+
+    "inactive" means the customer already exists in QB (found by AccountNumber)
+    but is marked inactive there -- distinct from "not_found" so FM can tell the
+    user to reactivate it in QB rather than looping "not synced" forever with
+    no way to tell the two apart.
     """
     data           = request.get_json(force=True, silent=True) or {}
     account_number = data.get("account_number", "").strip()
@@ -339,6 +345,9 @@ def sync_customer():
         if customer is None:
             _log["status"] = "not_found"
             return jsonify({"status": "not_found", "account_number": account_number})
+        if not customer.get("is_active", True):
+            _log.update({"status": "inactive", "list_id": customer.get("list_id", "")})
+            return jsonify({"status": "inactive", "customer": customer})
         _log.update({"status": "ok", "list_id": customer.get("list_id", "")})
         return jsonify({"status": "ok", "customer": customer})
     except RuntimeError as e:

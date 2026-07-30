@@ -540,8 +540,15 @@ def get_customer_by_account(account_number: str, bypass_cache: bool = False) -> 
             if hit:
                 return customer
 
-        # Cache miss — fetch all customers, populate cache, return match.
-        response = rp.ProcessRequest(ticket, build_customer_list_query())
+        # Cache miss — fetch all customers (including inactive -- see below),
+        # populate cache, return match.
+        #
+        # ActiveStatus="All" here (unlike get_all_customers' bulk "ActiveOnly"
+        # query): a customer that already exists in QB but is marked inactive
+        # must still be found and reported as such, not treated identically to
+        # a customer that has never been added to QB at all. Without this, a
+        # sync retry loops forever with no way for the user to discover why.
+        response = rp.ProcessRequest(ticket, build_customer_list_query("All"))
         root = ET.fromstring(response)
         target = account_number.strip().lower()
 
@@ -557,6 +564,7 @@ def get_customer_by_account(account_number: str, bypass_cache: bool = False) -> 
                 "list_id":        cust.findtext("ListID") or "",
                 "full_name":      _ascii_safe(cust.findtext("FullName") or ""),
                 "account_number": acct,
+                "is_active":      (cust.findtext("IsActive") or "true").lower() != "false",
             }
             customers.append(c)
             if acct.strip().lower() == target:
