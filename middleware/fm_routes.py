@@ -15,6 +15,7 @@ Endpoints:
     POST /fm/debug-invoice  — return generated qbXML without submitting (dev only)
     GET  /fm/view-invoice   — render a posted invoice as HTML
     GET  /fm/view-sales-order — render a posted sales order as HTML
+    GET  /fm/debug-query-raw — return raw qbXML for an existing invoice/SO (dev only)
 """
 
 import html as _html
@@ -525,6 +526,44 @@ def view_sales_order():
         return f"<h1 style='font-family:Arial'>Error</h1><p style='font-family:Arial'>{_html.escape(str(e))}</p>", 422
     except Exception as e:
         return f"<h1 style='font-family:Arial'>Unexpected Error</h1><p style='font-family:Arial'>{_html.escape(str(e))}</p>", 500
+
+
+@bp.get("/debug-query-raw")
+def debug_query_raw():
+    """
+    Return the RAW, unparsed qbXML response for an existing Invoice or Sales Order.
+
+    One-off diagnostic tool -- not used by FM or any live posting path. Purpose:
+    inspect exactly how QuickBooks represents sales tax on a real, manually-created
+    transaction before wiring up automated tax handling (2026-08-07).
+
+    Query params:
+        type        — "invoice" or "sales-order"
+        ref_number  — QB invoice # or SO # (whatever Cat sees in QB)
+        company     — "acoustical" or "architectural"
+        api_key     — shared API key (query string since GET can't send custom headers)
+    """
+    if request.args.get("api_key", "") != API_KEY:
+        return "<h1>Unauthorized</h1>", 401
+
+    kind       = request.args.get("type", "").strip().lower()
+    ref_number = request.args.get("ref_number", "").strip()
+    company    = request.args.get("company", "").lower()
+
+    if kind not in ("invoice", "sales-order"):
+        return "<h1>type must be 'invoice' or 'sales-order'</h1>", 400
+    if not ref_number:
+        return "<h1>Missing ref_number parameter</h1>", 400
+    if company not in ("acoustical", "architectural"):
+        return "<h1>Missing or invalid company parameter</h1>", 400
+
+    try:
+        raw = com.get_raw_query_response(kind, ref_number, company)
+        return raw, 200, {"Content-Type": "text/xml; charset=utf-8"}
+    except RuntimeError as e:
+        return f"<h1>Error</h1><p>{_html.escape(str(e))}</p>", 422
+    except Exception as e:
+        return f"<h1>Unexpected Error</h1><p>{_html.escape(str(e))}</p>", 500
 
 
 def _render_invoice_html(inv: dict) -> str:

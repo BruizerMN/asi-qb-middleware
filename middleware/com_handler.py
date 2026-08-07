@@ -812,6 +812,25 @@ def get_sales_order(ref_number: str, expected_slug: str) -> dict:
         _close_session(rp, ticket)
 
 
+def get_raw_query_response(kind: str, ref_number: str, expected_slug: str) -> str:
+    """
+    Return the raw, unparsed qbXML response for an InvoiceQuery or SalesOrderQuery.
+
+    One-off diagnostic tool -- not used by any live posting or rendering path.
+    Purpose: inspect exactly how QuickBooks represents sales tax on a real,
+    manually-created transaction (element names/values) before wiring up
+    automated tax handling on the posting side. kind is "invoice" or "sales-order".
+    """
+    rp, ticket = _open_session()
+    try:
+        info = _get_company_info(rp, ticket)
+        verify_company(info, expected_slug)
+        qbxml = build_invoice_query(ref_number) if kind == "invoice" else build_sales_order_query(ref_number)
+        return rp.ProcessRequest(ticket, qbxml)
+    finally:
+        _close_session(rp, ticket)
+
+
 def get_item_by_name(item_name: str) -> dict | None:
     """
     Return a single item matching item_name, or None if not found.

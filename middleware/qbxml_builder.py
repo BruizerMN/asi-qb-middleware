@@ -180,6 +180,12 @@ def build_sales_order_add(payload: dict) -> str:
     if payload.get("class_id"):
         _text(so, "ClassRef/FullName", payload["class_id"])
 
+    # ASI-specific SO template, so QB prints/emails from the right form instead
+    # of defaulting to the built-in pro forma invoice template. Per Cat's
+    # request (2026-08-07). TemplateRef must appear here -- after ClassRef,
+    # before TxnDate -- per the QB SDK's required SalesOrderAdd element order.
+    _text(so, "TemplateRef/FullName", "ASI Sales Order")
+
     _text(so, "TxnDate", payload["order_date"])
 
     # RefNumber is the QB-visible SO # — the FM Order ID, so it matches the
