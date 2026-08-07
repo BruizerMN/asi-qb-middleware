@@ -11,7 +11,8 @@ Expected payload structure (all fields are strings unless noted):
                                        # (Ref No. / Invoice # / SO #). Misleadingly named for
                                        # historical reasons; NOT the customer's PO (see cust_po).
     "order_date": "2026-05-05",       # YYYY-MM-DD
-    "ship_date": "2026-05-10",        # YYYY-MM-DD, optional
+    "ship_date": "2026-05-10",        # YYYY-MM-DD, optional -- writes QB's "Promise Date"
+                                       # custom field (a Data Extension), NOT native ShipDate
     "cust_po": "PO-9876",             # optional — QB PONumber (P.O. No. field)
     "class_id": "80000001-1234567",   # optional — QB Class ListID for segment reporting
     "ship_via": "UPS Ground",         # optional
@@ -45,6 +46,22 @@ Expected payload structure (all fields are strings unless noted):
 """
 
 import xml.etree.ElementTree as ET
+from datetime import datetime
+
+
+def _mmddyyyy(iso_date: str) -> str:
+    """Convert an FM-supplied YYYY-MM-DD date to QB's MM/DD/YYYY display convention.
+
+    Used only for the "Promise Date" custom field (a plain STR255TYPE data
+    extension, not a native QB date type) -- QB doesn't reformat/validate it,
+    so we match the format already used by every other Promise Date value
+    already in the company file (e.g. "09/16/2026"), confirmed 2026-08-07 via
+    a real SalesOrderQuery response. Falls back to the raw input on parse
+    failure rather than crash the whole push over a display-only field."""
+    try:
+        return datetime.strptime(iso_date, "%Y-%m-%d").strftime("%m/%d/%Y")
+    except ValueError:
+        return iso_date
 
 
 def _ascii_safe(value: str) -> str:
@@ -115,9 +132,6 @@ def build_invoice_add(payload: dict) -> str:
     if payload.get("rep_name"):
         _text(inv, "SalesRepRef/FullName", _ascii_safe(payload["rep_name"]))
 
-    if payload.get("ship_date"):
-        _text(inv, "ShipDate", payload["ship_date"])
-
     if payload.get("ship_via"):
         _text(inv, "ShipMethodRef/FullName", _ascii_safe(payload["ship_via"]))
 
@@ -151,6 +165,18 @@ def build_invoice_add(payload: dict) -> str:
     # QB_SalesTaxItems table) is in progress but not ready. Until then this drops
     # tax from the QB posting entirely rather than crash the whole push. Do not
     # re-add a "Sales Tax" ItemRef line -- see qbxml_builder.py history/PR notes.
+
+    # "Promise Date" (2026-08-07 correction): this is a QB custom field (Data
+    # Extension), NOT the native ShipDate element -- confirmed via a real
+    # SalesOrderQuery response where ShipDate just mirrored TxnDate while the
+    # actual "Promise Date" DataExtRet held a distinct, meaningful date. The
+    # first attempt at this wired ship_date into native ShipDate; wrong target.
+    if payload.get("ship_date"):
+        de = ET.SubElement(inv, "DataExt")
+        _text(de, "OwnerID", "0")
+        _text(de, "DataExtName", "Promise Date")
+        _text(de, "DataExtType", "STR255TYPE")
+        _text(de, "DataExtValue", _mmddyyyy(payload["ship_date"]))
 
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
@@ -205,9 +231,6 @@ def build_sales_order_add(payload: dict) -> str:
     if payload.get("rep_name"):
         _text(so, "SalesRepRef/FullName", _ascii_safe(payload["rep_name"]))
 
-    if payload.get("ship_date"):
-        _text(so, "ShipDate", payload["ship_date"])
-
     if payload.get("ship_via"):
         _text(so, "ShipMethodRef/FullName", _ascii_safe(payload["ship_via"]))
 
@@ -236,6 +259,15 @@ def build_sales_order_add(payload: dict) -> str:
     # STOPGAP (2026-08-07): tax_amount is intentionally NOT pushed right now.
     # Same reasoning as build_invoice_add() -- see its comment for detail. This
     # is what was crashing on ASI-113705 with QB error 3140. Real fix pending.
+
+    # "Promise Date" -- QB custom field (Data Extension), not native ShipDate.
+    # See build_invoice_add()'s comment for how we know that.
+    if payload.get("ship_date"):
+        de = ET.SubElement(so, "DataExt")
+        _text(de, "OwnerID", "0")
+        _text(de, "DataExtName", "Promise Date")
+        _text(de, "DataExtType", "STR255TYPE")
+        _text(de, "DataExtValue", _mmddyyyy(payload["ship_date"]))
 
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
