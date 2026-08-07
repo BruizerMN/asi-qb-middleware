@@ -143,15 +143,14 @@ def build_invoice_add(payload: dict) -> str:
         _text(freight_li, "Quantity", "1")
         _text(freight_li, "Rate", str(payload["freight_amount"]))
 
-    # Tax — passed as a pre-calculated amount via a tax item
-    # QB Desktop requires a SalesTaxCodeRef or a tax line item.
-    # We use a non-taxable item "Sales Tax" to record the Avalara-calculated amount.
-    if payload.get("tax_amount") and float(payload["tax_amount"]) != 0:
-        tax_li = ET.SubElement(inv, "InvoiceLineAdd")
-        _text(tax_li, "ItemRef/FullName", "Sales Tax")
-        _text(tax_li, "Desc", "Sales Tax (Avalara)")
-        _text(tax_li, "Quantity", "1")
-        _text(tax_li, "Rate", str(payload["tax_amount"]))
+    # STOPGAP (2026-08-07): tax_amount is intentionally NOT pushed right now.
+    # The old approach (an InvoiceLineAdd referencing an ItemRef named "Sales Tax")
+    # crashes with QB error 3140 -- that Item was never created in QB, and Item
+    # type/list references can't be used this way for tax regardless. The real
+    # fix (ItemSalesTaxRef + per-line SalesTaxCodeRef, matched against a synced
+    # QB_SalesTaxItems table) is in progress but not ready. Until then this drops
+    # tax from the QB posting entirely rather than crash the whole push. Do not
+    # re-add a "Sales Tax" ItemRef line -- see qbxml_builder.py history/PR notes.
 
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
@@ -234,13 +233,9 @@ def build_sales_order_add(payload: dict) -> str:
         _text(freight_li, "Quantity", "1")
         _text(freight_li, "Rate", str(payload["freight_amount"]))
 
-    # Tax — passed as a pre-calculated amount via a tax item, same as InvoiceAdd
-    if payload.get("tax_amount") and float(payload["tax_amount"]) != 0:
-        tax_li = ET.SubElement(so, "SalesOrderLineAdd")
-        _text(tax_li, "ItemRef/FullName", "Sales Tax")
-        _text(tax_li, "Desc", "Sales Tax (Avalara)")
-        _text(tax_li, "Quantity", "1")
-        _text(tax_li, "Rate", str(payload["tax_amount"]))
+    # STOPGAP (2026-08-07): tax_amount is intentionally NOT pushed right now.
+    # Same reasoning as build_invoice_add() -- see its comment for detail. This
+    # is what was crashing on ASI-113705 with QB error 3140. Real fix pending.
 
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
