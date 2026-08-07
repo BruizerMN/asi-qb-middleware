@@ -377,6 +377,23 @@ def build_item_list_query() -> str:
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 
+def build_item_sales_tax_list_query() -> str:
+    """Return a batch query for all active Sales Tax Items and Sales Tax Group Items.
+
+    Diagnostic/sync tool (2026-08-07) -- pulls QB's actual tax-item list so FM can
+    mirror it (rather than hand-maintaining a separate state->rate table) and
+    auto-match an order's ship-to state + FM-calculated rate against a real,
+    currently-valid QB Sales Tax Item.
+    """
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="continueOnError")
+    req1 = ET.SubElement(msgs, "ItemSalesTaxQueryRq", requestID="1")
+    _text(req1, "ActiveStatus", "ActiveOnly")
+    req2 = ET.SubElement(msgs, "ItemSalesTaxGroupQueryRq", requestID="2")
+    _text(req2, "ActiveStatus", "ActiveOnly")
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
 def build_item_query_by_name(item_name: str) -> str:
     """Return a batch query for a single item by FullName across all QB item types."""
     root = ET.Element("QBXML")

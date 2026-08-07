@@ -24,6 +24,7 @@ from .qbxml_builder import (
     build_customer_list_query, build_item_list_query,
     build_item_query_by_name, build_terms_query, build_ship_method_query,
     build_sales_rep_query, build_invoice_query, build_sales_order_query, ITEM_QUERY_TYPES,
+    build_item_sales_tax_list_query,
 )
 
 APP_NAME = "ASI QB Middleware"
@@ -814,18 +815,23 @@ def get_sales_order(ref_number: str, expected_slug: str) -> dict:
 
 def get_raw_query_response(kind: str, ref_number: str, expected_slug: str) -> str:
     """
-    Return the raw, unparsed qbXML response for an InvoiceQuery or SalesOrderQuery.
+    Return the raw, unparsed qbXML response for an InvoiceQuery, SalesOrderQuery,
+    or the full Sales Tax Item/Group list.
 
     One-off diagnostic tool -- not used by any live posting or rendering path.
-    Purpose: inspect exactly how QuickBooks represents sales tax on a real,
-    manually-created transaction (element names/values) before wiring up
-    automated tax handling on the posting side. kind is "invoice" or "sales-order".
+    kind is "invoice", "sales-order", or "sales-tax-items" (ref_number ignored
+    for "sales-tax-items" -- it's a list query, not a lookup by number).
     """
     rp, ticket = _open_session()
     try:
         info = _get_company_info(rp, ticket)
         verify_company(info, expected_slug)
-        qbxml = build_invoice_query(ref_number) if kind == "invoice" else build_sales_order_query(ref_number)
+        if kind == "invoice":
+            qbxml = build_invoice_query(ref_number)
+        elif kind == "sales-order":
+            qbxml = build_sales_order_query(ref_number)
+        else:
+            qbxml = build_item_sales_tax_list_query()
         return rp.ProcessRequest(ticket, qbxml)
     finally:
         _close_session(rp, ticket)

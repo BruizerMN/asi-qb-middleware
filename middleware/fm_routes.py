@@ -531,15 +531,18 @@ def view_sales_order():
 @bp.get("/debug-query-raw")
 def debug_query_raw():
     """
-    Return the RAW, unparsed qbXML response for an existing Invoice or Sales Order.
+    Return the RAW, unparsed qbXML response for an existing Invoice, Sales Order,
+    or the full Sales Tax Item/Group list.
 
     One-off diagnostic tool -- not used by FM or any live posting path. Purpose:
-    inspect exactly how QuickBooks represents sales tax on a real, manually-created
-    transaction before wiring up automated tax handling (2026-08-07).
+    inspect exactly how QuickBooks represents sales tax (both on a real transaction
+    and in its Sales Tax Item list) before wiring up automated tax handling
+    (2026-08-07).
 
     Query params:
-        type        — "invoice" or "sales-order"
-        ref_number  — QB invoice # or SO # (whatever Cat sees in QB)
+        type        — "invoice", "sales-order", or "sales-tax-items"
+        ref_number  — QB invoice # or SO # (required for invoice/sales-order;
+                      ignored for sales-tax-items, which is a list query)
         company     — "acoustical" or "architectural"
         api_key     — shared API key (query string since GET can't send custom headers)
     """
@@ -550,9 +553,9 @@ def debug_query_raw():
     ref_number = request.args.get("ref_number", "").strip()
     company    = request.args.get("company", "").lower()
 
-    if kind not in ("invoice", "sales-order"):
-        return "<h1>type must be 'invoice' or 'sales-order'</h1>", 400
-    if not ref_number:
+    if kind not in ("invoice", "sales-order", "sales-tax-items"):
+        return "<h1>type must be 'invoice', 'sales-order', or 'sales-tax-items'</h1>", 400
+    if kind in ("invoice", "sales-order") and not ref_number:
         return "<h1>Missing ref_number parameter</h1>", 400
     if company not in ("acoustical", "architectural"):
         return "<h1>Missing or invalid company parameter</h1>", 400
