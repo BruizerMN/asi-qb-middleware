@@ -17,14 +17,14 @@ except ImportError:
 
 from .config import QB_COMPANY_FILES
 from .qbxml_builder import (
-    _ascii_safe,
+    _ascii_safe, _mmddyyyy,
     build_company_query,
     build_customer_query, build_customer_query_by_list_id,
     build_customer_name_filter_query, build_customer_add_job,
     build_customer_list_query, build_item_list_query,
     build_item_query_by_name, build_terms_query, build_ship_method_query,
     build_sales_rep_query, build_invoice_query, build_sales_order_query, ITEM_QUERY_TYPES,
-    build_item_sales_tax_list_query,
+    build_item_sales_tax_list_query, build_data_ext_add,
 )
 
 APP_NAME = "ASI QB Middleware"
@@ -367,11 +367,39 @@ def ensure_customer_job(
         _close_session(rp, ticket)
 
 
-def submit_invoice(qbxml: str, expected_slug: str) -> str:
+def _set_promise_date(rp, ticket, txn_id: str, txn_type: str, ship_date: str) -> str:
+    """Best-effort follow-up: set the 'Promise Date' custom field on an
+    already-created transaction via DataExtAdd. Must run AFTER the parent
+    Add succeeds and reuses its open session -- DataExt is not valid inline
+    within InvoiceAdd/SalesOrderAdd itself (see build_invoice_add()'s
+    comment / qbxml_builder.py history, 2026-08-10).
+
+    Never raises -- the parent transaction has already succeeded by the time
+    this runs, so a Promise Date failure shouldn't fail the whole submission.
+    But it also isn't silently swallowed: returns a warning string on
+    failure ("" on success) for the caller to surface, since a hidden
+    failure behind a reported success is exactly the bug class that bit
+    this project before (see QB_Preflight Build 0028 history)."""
+    try:
+        de_xml = build_data_ext_add(txn_id, txn_type, "Promise Date", _mmddyyyy(ship_date))
+        de_resp = rp.ProcessRequest(ticket, de_xml)
+        de_root = ET.fromstring(de_resp)
+        de_rs = de_root.find(".//DataExtAddRs")
+        if de_rs is None or de_rs.get("statusCode", "") != "0":
+            msg = de_rs.get("statusMessage", "no response") if de_rs is not None else "no response"
+            return f"Promise Date was not set: {msg}"
+        return ""
+    except Exception as e:
+        return f"Promise Date was not set: {e}"
+
+
+def submit_invoice(qbxml: str, expected_slug: str, ship_date: str = "") -> tuple:
     """
     Verify the correct QB company file is open, then submit an InvoiceAdd.
-    Returns the QB invoice number (TxnNumber) on success.
-    Raises RuntimeError with a user-friendly message on any failure.
+    Returns (invoice_number, warning) -- warning is "" unless the Promise
+    Date follow-up failed (the invoice itself still succeeded in that case).
+    Raises RuntimeError with a user-friendly message on any failure of the
+    invoice itself.
     """
     rp, ticket = _open_session()
     try:
@@ -409,20 +437,26 @@ def submit_invoice(qbxml: str, expected_slug: str) -> str:
                 f"Response: {ET.tostring(rs, encoding='unicode')}"
             )
 
-        return invoice_number
+        warning = ""
+        if ship_date and txn_id:
+            warning = _set_promise_date(rp, ticket, txn_id, "Invoice", ship_date)
+
+        return invoice_number, warning
 
     finally:
         _close_session(rp, ticket)
 
 
-def submit_sales_order(qbxml: str, expected_slug: str) -> str:
+def submit_sales_order(qbxml: str, expected_slug: str, ship_date: str = "") -> tuple:
     """
     Verify the correct QB company file is open, then submit a SalesOrderAdd.
-    Returns the QB sales order number (RefNumber) on success.
-    Raises RuntimeError with a user-friendly message on any failure.
+    Returns (so_number, warning) -- warning is "" unless the Promise Date
+    follow-up failed (the sales order itself still succeeded in that case).
+    Raises RuntimeError with a user-friendly message on any failure of the
+    sales order itself.
 
     Mirrors submit_invoice() exactly, just checking SalesOrderAddRs instead
-    of InvoiceAddRs. Not yet tested against a live QB Desktop session.
+    of InvoiceAddRs.
     """
     rp, ticket = _open_session()
     try:
@@ -457,7 +491,11 @@ def submit_sales_order(qbxml: str, expected_slug: str) -> str:
                 f"Response: {ET.tostring(rs, encoding='unicode')}"
             )
 
-        return so_number
+        warning = ""
+        if ship_date and txn_id:
+            warning = _set_promise_date(rp, ticket, txn_id, "SalesOrder", ship_date)
+
+        return so_number, warning
 
     finally:
         _close_session(rp, ticket)

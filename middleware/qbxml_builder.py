@@ -204,17 +204,17 @@ def build_invoice_add(payload: dict) -> str:
     # tax from the QB posting entirely rather than crash the whole push. Do not
     # re-add a "Sales Tax" ItemRef line -- see qbxml_builder.py history/PR notes.
 
-    # "Promise Date" (2026-08-07 correction): this is a QB custom field (Data
-    # Extension), NOT the native ShipDate element -- confirmed via a real
-    # SalesOrderQuery response where ShipDate just mirrored TxnDate while the
-    # actual "Promise Date" DataExtRet held a distinct, meaningful date. The
-    # first attempt at this wired ship_date into native ShipDate; wrong target.
-    if payload.get("ship_date"):
-        de = ET.SubElement(inv, "DataExt")
-        _text(de, "OwnerID", "0")
-        _text(de, "DataExtName", "Promise Date")
-        _text(de, "DataExtType", "STR255TYPE")
-        _text(de, "DataExtValue", _mmddyyyy(payload["ship_date"]))
+    # "Promise Date" is NOT included here. It's a QB custom field (Data
+    # Extension) that must be set via a separate DataExtAdd request AFTER
+    # this transaction is created, referencing its TxnID -- see
+    # build_data_ext_add(). An earlier attempt embedded it inline as a
+    # trailing <DataExt> child of InvoiceAdd/SalesOrderAdd; confirmed
+    # 2026-08-10 via isolated live testing that DataExt is not a valid
+    # top-level child of these Add requests at all (only within line items,
+    # per the qbXML schema) -- QuickBooks rejected the ENTIRE request with a
+    # raw "found an error when parsing the provided XML text stream" COM
+    # exception, not a clean statusCode rejection. See com_handler.py's
+    # submit_invoice()/submit_sales_order() for the follow-up call.
 
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
@@ -298,15 +298,35 @@ def build_sales_order_add(payload: dict) -> str:
     # Same reasoning as build_invoice_add() -- see its comment for detail. This
     # is what was crashing on ASI-113705 with QB error 3140. Real fix pending.
 
-    # "Promise Date" -- QB custom field (Data Extension), not native ShipDate.
-    # See build_invoice_add()'s comment for how we know that.
-    if payload.get("ship_date"):
-        de = ET.SubElement(so, "DataExt")
-        _text(de, "OwnerID", "0")
-        _text(de, "DataExtName", "Promise Date")
-        _text(de, "DataExtType", "STR255TYPE")
-        _text(de, "DataExtValue", _mmddyyyy(payload["ship_date"]))
+    # "Promise Date" is NOT included here -- see build_invoice_add()'s comment
+    # for the full explanation. Must be set via a separate build_data_ext_add()
+    # request after this transaction is created.
 
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
+def build_data_ext_add(txn_id: str, txn_data_ext_type: str, data_ext_name: str, data_ext_value: str) -> str:
+    """Return a DataExtAddRq to set a transaction-level custom field (Data
+    Extension) on an EXISTING transaction, referenced by TxnID.
+
+    Must be called as a follow-up request after InvoiceAdd/SalesOrderAdd
+    succeeds -- DataExt is not a valid top-level child of those Add requests
+    (confirmed 2026-08-10 via isolated live testing; see build_invoice_add()'s
+    comment for the full story). txn_data_ext_type is the QB transaction type
+    name as a plain string, e.g. "Invoice" or "SalesOrder".
+
+    Verified working live 2026-08-10 against a real existing Sales Order
+    (queried by RefNumber to get its TxnID, then this call set Promise Date
+    on it cleanly, statusCode 0)."""
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "DataExtAddRq", requestID="1")
+    de = ET.SubElement(req, "DataExtAdd")
+    _text(de, "OwnerID", "0")
+    _text(de, "DataExtName", _ascii_safe(data_ext_name))
+    _text(de, "TxnDataExtType", txn_data_ext_type)
+    _text(de, "TxnID", txn_id)
+    _text(de, "DataExtValue", _ascii_safe(data_ext_value))
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 

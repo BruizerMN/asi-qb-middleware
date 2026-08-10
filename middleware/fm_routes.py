@@ -120,13 +120,18 @@ def post_invoice():
         qbxml  = build_invoice_add(invoice)
         _qbxml = qbxml  # capture for error logging before submitting
 
-        qb_invoice_id = com.submit_invoice(qbxml, company)
+        qb_invoice_id, warning = com.submit_invoice(qbxml, company, invoice.get("ship_date", ""))
         _log.update({"status": "ok", "qb_invoice_id": qb_invoice_id})
-        return jsonify({
+        if warning:
+            _log["warning"] = warning
+        response = {
             "status": "ok",
             "qb_invoice_id": qb_invoice_id,
             "order_id": str(order_id),
-        })
+        }
+        if warning:
+            response["warning"] = warning
+        return jsonify(response)
     except RuntimeError as e:
         _log["error"] = str(e)
         if _qbxml:
@@ -221,13 +226,18 @@ def post_sales_order():
         qbxml  = build_sales_order_add(sales_order)
         _qbxml = qbxml  # capture for error logging before submitting
 
-        qb_so_number = com.submit_sales_order(qbxml, company)
+        qb_so_number, warning = com.submit_sales_order(qbxml, company, sales_order.get("ship_date", ""))
         _log.update({"status": "ok", "qb_so_number": qb_so_number})
-        return jsonify({
+        if warning:
+            _log["warning"] = warning
+        response = {
             "status": "ok",
             "qb_so_number": qb_so_number,
             "order_id": str(order_id),
-        })
+        }
+        if warning:
+            response["warning"] = warning
+        return jsonify(response)
     except RuntimeError as e:
         _log["error"] = str(e)
         if _qbxml:
@@ -454,16 +464,30 @@ def validate_rep():
 @bp.post("/debug-invoice")
 @require_api_key
 def debug_invoice():
-    """Return the generated qbXML without submitting — for debugging parse errors."""
+    """Return the generated qbXML without submitting — for debugging parse errors.
+
+    Body: {"invoice": {...}} for InvoiceAdd (default), or
+          {"sales_order": {...}} for SalesOrderAdd -- same payload shape,
+          just routes to build_sales_order_add() instead. Added 2026-08-10
+          because this endpoint predates the SalesOrder path and only ever
+          built InvoiceAdd XML, even though production posts go through
+          SalesOrderAdd."""
     data = request.get_json(force=True, silent=True)
     if not data:
         return jsonify({"status": "error", "error": "Invalid JSON"}), 400
-    invoice = data.get("invoice")
-    if not invoice:
-        return jsonify({"status": "error", "error": "invoice payload is required"}), 400
+    if "sales_order" in data:
+        payload = data.get("sales_order")
+        builder = build_sales_order_add
+        kind = "sales_order"
+    else:
+        payload = data.get("invoice")
+        builder = build_invoice_add
+        kind = "invoice"
+    if not payload:
+        return jsonify({"status": "error", "error": "invoice or sales_order payload is required"}), 400
     try:
-        qbxml = build_invoice_add(invoice)
-        return jsonify({"status": "ok", "qbxml": qbxml})
+        qbxml = builder(payload)
+        return jsonify({"status": "ok", "kind": kind, "qbxml": qbxml})
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 500
 
