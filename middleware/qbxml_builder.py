@@ -88,9 +88,19 @@ def _ascii_safe(value: str) -> str:
     Python's XML parser reads those as C1 control characters, so we remap
     them here before the ASCII conversion step.
 
+    Also normalizes bare CR / CRLF line breaks to LF -- a lone \\r is legal
+    XML 1.0 but QuickBooks Desktop's own parser rejects it outright. FM
+    multi-line item descriptions (e.g. spec sheets with one attribute per
+    line) commonly use \\r as the line separator, which crashed real orders
+    with "found an error when parsing the provided XML text stream."
+    Root-caused 2026-08-10 from ASI-113748 (multi-line panel spec Desc
+    fields on 2 of 5 line items).
+
     Finally, strips any XML-illegal C0 control character (see
     _ILLEGAL_XML_CHARS) that would otherwise produce malformed qbXML."""
     result = (str(value)
+        # Step 0: normalize CRLF/lone CR to LF before anything else.
+        .replace('\r\n', '\n').replace('\r', '\n')
         # Step 1: remap Windows-1252 C1 bytes that QB may emit as raw bytes.
         .replace('', '‘')  # CP1252 0x91 -> LEFT SINGLE QUOTATION MARK
         .replace('', '’')  # CP1252 0x92 -> RIGHT SINGLE QUOTATION MARK
