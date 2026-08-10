@@ -88,19 +88,25 @@ def _ascii_safe(value: str) -> str:
     Python's XML parser reads those as C1 control characters, so we remap
     them here before the ASCII conversion step.
 
-    Also normalizes bare CR / CRLF line breaks to LF -- a lone \\r is legal
-    XML 1.0 but QuickBooks Desktop's own parser rejects it outright. FM
-    multi-line item descriptions (e.g. spec sheets with one attribute per
-    line) commonly use \\r as the line separator, which crashed real orders
-    with "found an error when parsing the provided XML text stream."
-    Root-caused 2026-08-10 from ASI-113748 (multi-line panel spec Desc
-    fields on 2 of 5 line items).
+    Also collapses any embedded line break (CRLF, lone CR, or lone LF) into
+    a single space. FM multi-line item descriptions (e.g. spec sheets with
+    one attribute per line) commonly use bare \\r as the line separator.
+    A first attempt just normalized \\r -> \\n (both are legal XML 1.0
+    characters) but QuickBooks Desktop's own parser rejected that too --
+    confirmed 2026-08-10 by inspecting the actual in-memory string handed
+    to ProcessRequest (verified to contain only \\n, no \\r) and getting the
+    identical "found an error when parsing the provided XML text stream"
+    failure on retry. QB's parser apparently doesn't tolerate ANY embedded
+    line break inside element text, not just \\r specifically -- so instead
+    of picking a different line-break character, don't send one at all.
+    Root-caused from ASI-113748 (multi-line panel spec Desc fields on 2 of
+    5 line items).
 
     Finally, strips any XML-illegal C0 control character (see
     _ILLEGAL_XML_CHARS) that would otherwise produce malformed qbXML."""
     result = (str(value)
-        # Step 0: normalize CRLF/lone CR to LF before anything else.
-        .replace('\r\n', '\n').replace('\r', '\n')
+        # Step 0: collapse all line breaks to a single space.
+        .replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ')
         # Step 1: remap Windows-1252 C1 bytes that QB may emit as raw bytes.
         .replace('', '‘')  # CP1252 0x91 -> LEFT SINGLE QUOTATION MARK
         .replace('', '’')  # CP1252 0x92 -> RIGHT SINGLE QUOTATION MARK
@@ -120,7 +126,10 @@ def _ascii_safe(value: str) -> str:
     )
     # Step 4: replace any illegal XML control character (see _ILLEGAL_XML_CHARS)
     # with a space -- stripping to '' would silently join adjacent words.
-    return _ILLEGAL_XML_CHARS.sub(' ', result)
+    result = _ILLEGAL_XML_CHARS.sub(' ', result)
+    # Step 5: collapse runs of spaces (e.g. a trailing space before a
+    # collapsed line break in Step 0) down to one, and trim ends.
+    return re.sub(r' {2,}', ' ', result).strip()
 
 
 def build_invoice_add(payload: dict) -> str:
