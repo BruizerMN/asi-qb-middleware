@@ -45,6 +45,7 @@ Expected payload structure (all fields are strings unless noted):
 }
 """
 
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
@@ -64,6 +65,18 @@ def _mmddyyyy(iso_date: str) -> str:
         return iso_date
 
 
+# XML 1.0 only permits tab (0x09), LF (0x0A), and CR (0x0D) from the C0
+# control range -- every other 0x00-0x1F byte is illegal in an XML document,
+# even though it's perfectly valid ASCII. These can slip into FM text fields
+# (Memo, notes, addresses) via copy-paste from email/PDF sources and produce
+# qbXML that QuickBooks' own parser rejects outright ("found an error when
+# parsing the provided XML text stream"), unrelated to the ASCII-range replacements
+# below. Root-caused 2026-08-10: Katie Anderson hit this on ASI-113748 right after
+# Preflight passed; Bill reproduced the identical error independently on the same
+# order, confirming it's a deterministic data issue, not a transient QB glitch.
+_ILLEGAL_XML_CHARS = re.compile('[\x00-\x08\x0b\x0c\x0e-\x1f]')
+
+
 def _ascii_safe(value: str) -> str:
     """Replace Unicode typographic characters with ASCII equivalents.
     QB Desktop's XML parser does not support non-ASCII characters.
@@ -73,8 +86,11 @@ def _ascii_safe(value: str) -> str:
     Win32 application whose qbXML output may contain raw CP1252 bytes (e.g.
     0x92 for the right single quote) even when the XML header declares UTF-8.
     Python's XML parser reads those as C1 control characters, so we remap
-    them here before the ASCII conversion step."""
-    return (str(value)
+    them here before the ASCII conversion step.
+
+    Finally, strips any XML-illegal C0 control character (see
+    _ILLEGAL_XML_CHARS) that would otherwise produce malformed qbXML."""
+    result = (str(value)
         # Step 1: remap Windows-1252 C1 bytes that QB may emit as raw bytes.
         .replace('', '‘')  # CP1252 0x91 -> LEFT SINGLE QUOTATION MARK
         .replace('', '’')  # CP1252 0x92 -> RIGHT SINGLE QUOTATION MARK
@@ -92,6 +108,9 @@ def _ascii_safe(value: str) -> str:
         # Step 3: replace any remaining non-ASCII with ?
         .encode('ascii', 'replace').decode('ascii')
     )
+    # Step 4: replace any illegal XML control character (see _ILLEGAL_XML_CHARS)
+    # with a space -- stripping to '' would silently join adjacent words.
+    return _ILLEGAL_XML_CHARS.sub(' ', result)
 
 
 def build_invoice_add(payload: dict) -> str:
