@@ -36,6 +36,34 @@ _LIST_CONFLICT_CODE = "3180"
 _LIST_CONFLICT_MAX_ATTEMPTS = 3
 _LIST_CONFLICT_RETRY_DELAY = 1.5  # seconds
 
+# Recognized QB rejection message substrings (case-insensitive) -> a
+# friendlier, actionable message to show instead of QuickBooks' raw nested
+# error text. Matched on the MESSAGE, not the status code -- QB reuses the
+# same generic codes (e.g. 3180) for unrelated rejection reasons, confirmed
+# 2026-08-10 when a real order hit "credit limit exceeded" under the exact
+# same code used elsewhere for list-lock conflicts. The original QB message
+# is always appended, never hidden -- this only adds context on top.
+_KNOWN_REJECTIONS = [
+    (
+        "credit limit",
+        "This order could not be posted to QuickBooks because the customer's "
+        "credit limit has been exceeded. Have your QuickBooks administrator "
+        "review the customer's credit limit or apply an override, then "
+        "resubmit this order.",
+    ),
+]
+
+
+def _friendly_qb_message(status_msg: str) -> str:
+    """Prefix a known-cause explanation onto a raw QB rejection message when
+    recognized; otherwise return it unchanged. Never drops the original QB
+    text -- see _KNOWN_REJECTIONS."""
+    lowered = status_msg.lower()
+    for needle, explanation in _KNOWN_REJECTIONS:
+        if needle in lowered:
+            return f"{explanation}\n\n(QuickBooks said: {status_msg})"
+    return status_msg
+
 # ---------------------------------------------------------------------------
 # Customer list cache
 # Keyed by company slug. Avoids a full QB CustomerQueryRq on every individual
@@ -422,7 +450,7 @@ def submit_invoice(qbxml: str, expected_slug: str, ship_date: str = "") -> tuple
 
         if status_code != "0":
             raise RuntimeError(
-                f"QuickBooks rejected the invoice: {status_msg} (code {status_code})"
+                f"QuickBooks rejected the invoice: {_friendly_qb_message(status_msg)} (code {status_code})"
             )
 
         txn_number = rs.findtext(".//TxnNumber")
@@ -476,7 +504,7 @@ def submit_sales_order(qbxml: str, expected_slug: str, ship_date: str = "") -> t
 
         if status_code != "0":
             raise RuntimeError(
-                f"QuickBooks rejected the sales order: {status_msg} (code {status_code})"
+                f"QuickBooks rejected the sales order: {_friendly_qb_message(status_msg)} (code {status_code})"
             )
 
         txn_number = rs.findtext(".//TxnNumber")
