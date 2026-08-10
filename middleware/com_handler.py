@@ -29,6 +29,13 @@ from .qbxml_builder import (
 
 APP_NAME = "ASI QB Middleware"
 
+# QB status code for "This list has been modified by another user" -- a
+# transient multi-user list-lock conflict, not a real rejection. See
+# ensure_customer_job() for where this is retried.
+_LIST_CONFLICT_CODE = "3180"
+_LIST_CONFLICT_MAX_ATTEMPTS = 3
+_LIST_CONFLICT_RETRY_DELAY = 1.5  # seconds
+
 # ---------------------------------------------------------------------------
 # Customer list cache
 # Keyed by company slug. Avoids a full QB CustomerQueryRq on every individual
@@ -316,12 +323,16 @@ def ensure_customer_job(
             )
 
         # Create the job under the parent.
-        resp = rp.ProcessRequest(ticket, build_customer_add_job(parent_list_id, job_name))
-        root = ET.fromstring(resp)
-        rs = root.find(".//CustomerAddRs")
         job_name_used = (corrected_parent + ":" + job_name) if corrected_parent else customer_job_fullname
 
-        if rs is not None:
+        for attempt in range(1, _LIST_CONFLICT_MAX_ATTEMPTS + 1):
+            resp = rp.ProcessRequest(ticket, build_customer_add_job(parent_list_id, job_name))
+            root = ET.fromstring(resp)
+            rs = root.find(".//CustomerAddRs")
+
+            if rs is None:
+                return job_name_used, ""
+
             code = rs.get("statusCode", "0")
             if code == "0":
                 # Job created — extract its ListID from the response.
@@ -334,6 +345,16 @@ def ensure_customer_job(
                 # searching for the job by Name field + parent ListID match.
                 existing_id = _find_job_list_id(rp, ticket, parent_list_id, job_name)
                 return job_name_used, existing_id
+            elif code == _LIST_CONFLICT_CODE and attempt < _LIST_CONFLICT_MAX_ATTEMPTS:
+                # "This list has been modified by another user" -- a transient
+                # multi-user contention error, not a real rejection. Each
+                # workstation runs its own independent QB session, so this can
+                # happen when several people submit orders around the same
+                # time. Retrying almost always succeeds within a second or
+                # two. Root-caused 2026-08-10 (Cat Shoop's team, first day of
+                # multi-workstation rollout with zero retry logic in place).
+                time.sleep(_LIST_CONFLICT_RETRY_DELAY)
+                continue
             else:
                 msg = rs.get("statusMessage", "Unknown error")
                 raise RuntimeError(
