@@ -21,6 +21,7 @@ from .qbxml_builder import (
     build_company_query,
     build_customer_query, build_customer_query_by_list_id,
     build_customer_name_filter_query, build_customer_add_job,
+    build_customer_add, build_customer_mod,
     build_customer_list_query, build_item_list_query,
     build_item_query_by_name, build_terms_query, build_ship_method_query,
     build_sales_rep_query, build_invoice_query, build_sales_order_query, ITEM_QUERY_TYPES,
@@ -662,6 +663,142 @@ def get_customer_by_account(account_number: str, bypass_cache: bool = False) -> 
             _customer_cache_populate(slug, customers)
 
         return result
+
+    finally:
+        _close_session(rp, ticket)
+
+
+def create_or_update_customer(account_number: str, company_name: str) -> dict:
+    """
+    "UpdateCreate" entry point for a single top-level QB customer -- unlike
+    get_customer_by_account (read-only matching), this function writes to QB.
+    Matched by AccountNumber, same convention as the rest of the customer sync
+    family. Creates the customer if no match is found; updates it (CustomerMod)
+    if one is.
+
+    v1 minimal field set (Cat's first-round mapping, 2026-08-11): Name,
+    CompanyName (both set from company_name), AccountNumber. Cat's team is
+    still finalizing the rest of the field mapping -- more fields will be
+    added to build_customer_add()/build_customer_mod() once that's ready.
+
+    No expected_slug/company param, deliberately -- mirrors get_customer_by_account:
+    operates against whichever QB company file is currently open on this
+    workstation. When called automatically during a sales order push, the
+    caller (QB_Preflight) has already verified the correct company file is
+    open via its own earlier check, so a second verification here would be
+    redundant.
+
+    Returns one of:
+      {"action": "created", "customer": {list_id, full_name, account_number}}
+      {"action": "updated", "customer": {list_id, full_name, account_number}}
+      {"action": "duplicate_name", "conflict": {list_id, full_name, account_number}}
+        -- QB rejected the CustomerAdd because another customer/job already
+           owns that Name (error 3100). "conflict" identifies the existing
+           record so the FM user has enough information to find and resolve
+           it in QB, rather than a bare "name already in use" message.
+    Raises RuntimeError on any other QB rejection or connection failure.
+    """
+    rp, ticket = _open_session()
+    try:
+        info = _get_company_info(rp, ticket)
+        slug = _detect_slug(info["name"])
+
+        safe_name = _ascii_safe(company_name)[:41]
+        safe_account = _ascii_safe(account_number)[:41]
+
+        # Full fetch (ActiveStatus=All) -- QB has no AccountNumber filter, and
+        # an existing-but-inactive match must still be treated as "exists"
+        # (CustomerMod), not "not found" -- same reasoning as get_customer_by_account.
+        response = rp.ProcessRequest(ticket, build_customer_list_query("All"))
+        root = ET.fromstring(response)
+        target = safe_account.strip().lower()
+        existing = None
+        for cust in root.findall(".//CustomerRet"):
+            if cust.find("ParentRef") is not None:
+                continue
+            acct = cust.findtext("AccountNumber") or ""
+            if acct.strip().lower() == target:
+                existing = cust
+                break
+
+        if existing is not None:
+            list_id = existing.findtext("ListID") or ""
+            edit_sequence = existing.findtext("EditSequence") or ""
+            mod_xml = build_customer_mod({
+                "list_id": list_id,
+                "edit_sequence": edit_sequence,
+                "name": safe_name,
+                "account_number": safe_account,
+            })
+            resp = rp.ProcessRequest(ticket, mod_xml)
+            root2 = ET.fromstring(resp)
+            rs = root2.find(".//CustomerModRs")
+            if rs is None or rs.get("statusCode", "") != "0":
+                msg  = rs.get("statusMessage", "no response") if rs is not None else "no response"
+                code = rs.get("statusCode", "?") if rs is not None else "?"
+                raise RuntimeError(f"QuickBooks rejected the customer update: {msg} (code {code})")
+            ret = root2.find(".//CustomerRet")
+            if slug:
+                _customer_cache.pop(slug, None)
+            return {
+                "action": "updated",
+                "customer": {
+                    "list_id":        (ret.findtext("ListID") if ret is not None else "") or list_id,
+                    "full_name":      _ascii_safe((ret.findtext("FullName") if ret is not None else "") or safe_name),
+                    "account_number": (ret.findtext("AccountNumber") if ret is not None else "") or safe_account,
+                },
+            }
+
+        # Not found -- create.
+        add_xml = build_customer_add({"name": safe_name, "account_number": safe_account})
+        resp = rp.ProcessRequest(ticket, add_xml)
+        root2 = ET.fromstring(resp)
+        rs = root2.find(".//CustomerAddRs")
+        if rs is None:
+            raise RuntimeError("No CustomerAddRs in QB response.")
+
+        code = rs.get("statusCode", "")
+        if code == "0":
+            ret = root2.find(".//CustomerRet")
+            if slug:
+                _customer_cache.pop(slug, None)
+            return {
+                "action": "created",
+                "customer": {
+                    "list_id":        (ret.findtext("ListID") if ret is not None else "") or "",
+                    "full_name":      _ascii_safe((ret.findtext("FullName") if ret is not None else "") or safe_name),
+                    "account_number": (ret.findtext("AccountNumber") if ret is not None else "") or safe_account,
+                },
+            }
+        elif code == "3100":
+            # Name collision -- look up the conflicting record by Name so FM
+            # can show the user its account number (Bill, 2026-08-11: "enough
+            # information to find and address the issue"), instead of a bare
+            # "name already in use" message.
+            resp2 = rp.ProcessRequest(ticket, build_customer_name_filter_query(safe_name))
+            root3 = ET.fromstring(resp2)
+            conflict = None
+            for cust in root3.findall(".//CustomerRet"):
+                if _ascii_safe(cust.findtext("Name") or "").lower() == safe_name.lower():
+                    conflict = cust
+                    break
+            if conflict is None:
+                # Exact Name match not found (e.g. apostrophe/encoding drift) --
+                # fall back to the first NameFilter hit rather than nothing.
+                conflict = root3.find(".//CustomerRet")
+            return {
+                "action": "duplicate_name",
+                "conflict": {
+                    "list_id":        (conflict.findtext("ListID") if conflict is not None else "") or "",
+                    "full_name":      _ascii_safe((conflict.findtext("FullName") if conflict is not None else "") or ""),
+                    "account_number": (conflict.findtext("AccountNumber") if conflict is not None else "") or "",
+                },
+            }
+        else:
+            msg = rs.get("statusMessage", "Unknown error")
+            raise RuntimeError(
+                f"QuickBooks rejected customer creation for '{safe_name}': {msg} (code {code})"
+            )
 
     finally:
         _close_session(rp, ticket)

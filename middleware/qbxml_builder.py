@@ -377,6 +377,48 @@ def build_customer_add_job(parent_list_id: str, job_name: str) -> str:
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 
+def build_customer_add(payload: dict) -> str:
+    """Return a qbXML CustomerAdd request for a new top-level QB customer.
+
+    v1 minimal field set (Cat's first-round mapping, 2026-08-11 -- her team
+    is still building out the rest): Name and CompanyName both set from the
+    same FM company-name value, AccountNumber set from FM's customerID. Name
+    is QB's globally-unique internal list key (<=41 chars) -- collisions
+    raise QB error 3100, handled by the caller (com_handler.create_or_update_customer).
+    """
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "CustomerAddRq", requestID="1")
+    cust = ET.SubElement(req, "CustomerAdd")
+    name = _ascii_safe(payload["name"])[:41]
+    _text(cust, "Name", name)
+    _text(cust, "CompanyName", name)
+    _text(cust, "AccountNumber", _ascii_safe(payload["account_number"])[:41])
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
+def build_customer_mod(payload: dict) -> str:
+    """Return a qbXML CustomerMod request updating Name/CompanyName/AccountNumber
+    on an existing top-level QB customer.
+
+    Requires payload["list_id"] and payload["edit_sequence"] -- QB's
+    optimistic-lock token, fetched immediately before this call (see
+    com_handler.create_or_update_customer). A stale EditSequence causes QB
+    to reject the request rather than silently overwrite a concurrent edit.
+    """
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "CustomerModRq", requestID="1")
+    cust = ET.SubElement(req, "CustomerMod")
+    _text(cust, "ListID", payload["list_id"])
+    _text(cust, "EditSequence", payload["edit_sequence"])
+    name = _ascii_safe(payload["name"])[:41]
+    _text(cust, "Name", name)
+    _text(cust, "CompanyName", name)
+    _text(cust, "AccountNumber", _ascii_safe(payload["account_number"])[:41])
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
 def _build_bill_to(parent: ET.Element, payload: dict):
     if not payload.get("bill_to_name"):
         return

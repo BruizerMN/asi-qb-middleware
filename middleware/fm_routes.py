@@ -11,6 +11,7 @@ Endpoints:
     POST /fm/sync-customers — return all active QB customers for FM to match and store
     POST /fm/sync-items     — return all active QB items for FM to match and store
     POST /fm/sync-customer  — sync a single customer by AccountNumber
+    POST /fm/customer-updatecreate — create or update a single customer by AccountNumber
     POST /fm/sync-item      — sync a single item by Name (= FM productID)
     POST /fm/debug-invoice  — return generated qbXML without submitting (dev only)
     GET  /fm/view-invoice   — render a posted invoice as HTML
@@ -369,6 +370,60 @@ def sync_customer():
         return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
     finally:
         logger.log_event("sync_customer", **_log)
+
+
+@bp.post("/customer-updatecreate")
+@require_api_key
+def customer_updatecreate():
+    """
+    Create the QB customer if it doesn't exist (matched by AccountNumber), or
+    update it (CustomerMod) if it does.
+
+    v1 minimal field set (Cat's first-round mapping, 2026-08-11 -- her team is
+    still building out the rest): Name + CompanyName (both set from
+    company_name), AccountNumber.
+
+    Required fields:
+        account_number — FM customerID value (e.g. "C-18042")
+        company_name   — FM customerCompany value, used for QB Name + CompanyName
+
+    Returns:
+        {"status": "created", "customer": {"list_id":..., "full_name":..., "account_number":...}}
+        {"status": "updated",  "customer": {...same shape}}
+        {"status": "duplicate_name", "conflict": {"list_id":..., "full_name":..., "account_number":...}}
+        {"status": "error",    "error": "..."}
+
+    "duplicate_name" means QB already has a different customer/job using the
+    same Name (error 3100) -- "conflict" identifies that existing record
+    (including its account_number) so the FM user has enough information to
+    find and resolve it in QB.
+    """
+    data           = request.get_json(force=True, silent=True) or {}
+    account_number = data.get("account_number", "").strip()
+    company_name   = data.get("company_name", "").strip()
+    if not account_number or not company_name:
+        return jsonify({"status": "error", "error": "account_number and company_name are required"}), 400
+
+    _log = {"account_number": account_number, "company_name": company_name, "status": "error"}
+
+    try:
+        result = com.create_or_update_customer(account_number, company_name)
+        if result["action"] == "duplicate_name":
+            _log.update({
+                "status": "duplicate_name",
+                "conflict_account_number": result["conflict"].get("account_number", ""),
+            })
+            return jsonify({"status": "duplicate_name", "conflict": result["conflict"]})
+        _log.update({"status": result["action"], "list_id": result["customer"].get("list_id", "")})
+        return jsonify({"status": result["action"], "customer": result["customer"]})
+    except RuntimeError as e:
+        _log["error"] = str(e)
+        return jsonify({"status": "error", "error": str(e)}), 422
+    except Exception as e:
+        _log["error"] = f"Unexpected error: {e}"
+        return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+    finally:
+        logger.log_event("customer_updatecreate", **_log)
 
 
 @bp.post("/sync-item")
