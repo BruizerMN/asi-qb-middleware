@@ -698,7 +698,11 @@ def create_or_update_customer(account_number: str, fields: dict, existing_list_i
     QB_CustomerID, if any. When provided, it's validated FIRST via a direct
     ListID query (cheap, exact, immune to the AccountNumber-scan finding a
     stale/wrong match): if the returned record's AccountNumber still matches
-    `account_number`, nothing changes and normal matching proceeds as usual.
+    `account_number`, the link is current and the expensive full-customer-list
+    fetch below is skipped entirely -- proceeds straight to CustomerMod using
+    the ListID query's own ListID/EditSequence (2026-08-11 perf fix: that full
+    fetch costs ~20s+ and was previously always run regardless, even though a
+    validated ListID already tells us everything the scan would have found).
     If it does NOT match -- the FM-side link has gone stale (e.g. someone
     manually corrected the account number in QB without re-syncing FM) --
     the mismatch is recorded in the returned "stale_link" dict and the
@@ -782,23 +786,34 @@ def create_or_update_customer(account_number: str, fields: dict, existing_list_i
         # Full fetch (ActiveStatus=All) -- QB has no AccountNumber filter, and
         # an existing-but-inactive match must still be treated as "exists"
         # (CustomerMod), not "not found" -- same reasoning as get_customer_by_account.
-        trace.append("fetching full customer list (ActiveStatus=All) for AccountNumber scan")
-        response = rp.ProcessRequest(ticket, build_customer_list_query("All"))
-        root = ET.fromstring(response)
-        target = safe_account.strip().lower()
-        existing = None
-        for cust in root.findall(".//CustomerRet"):
-            if cust.find("ParentRef") is not None:
-                continue
-            acct = cust.findtext("AccountNumber") or ""
-            if acct.strip().lower() == target:
-                existing = cust
-                break
+        #
+        # Skipped entirely when the ListID pre-check above already validated a
+        # current link (2026-08-11 perf fix): val_cust IS the matching record
+        # in that case, so the full fetch + scan would just re-derive what we
+        # already have. This is the common case once a customer has synced
+        # once -- only a genuinely new-to-FM customer (no existing_list_id) or
+        # a stale link (cleared above) still needs the full scan.
+        if existing_list_id and stale_link is None:
+            trace.append(f"ListID pre-check already confirmed a valid link -- skipping full customer-list fetch, reusing ListID={existing_list_id!r}")
+            existing = val_cust
+        else:
+            trace.append("fetching full customer list (ActiveStatus=All) for AccountNumber scan")
+            response = rp.ProcessRequest(ticket, build_customer_list_query("All"))
+            root = ET.fromstring(response)
+            target = safe_account.strip().lower()
+            existing = None
+            for cust in root.findall(".//CustomerRet"):
+                if cust.find("ParentRef") is not None:
+                    continue
+                acct = cust.findtext("AccountNumber") or ""
+                if acct.strip().lower() == target:
+                    existing = cust
+                    break
 
         if existing is not None:
             list_id = existing.findtext("ListID") or ""
             edit_sequence = existing.findtext("EditSequence") or ""
-            trace.append(f"AccountNumber scan: found existing match, ListID={list_id!r} -- issuing CustomerMod")
+            trace.append(f"issuing CustomerMod (ListID={list_id!r})")
             mod_xml = build_customer_mod({
                 **fields,
                 "list_id": list_id,
