@@ -229,6 +229,34 @@ if ((Command-Exists "git") -or (Test-Path "C:\Program Files\Git\cmd\git.exe")) {
 }
 
 # ---------------------------------------------------------------------------
+# Stop any already-running middleware before touching its files
+# ---------------------------------------------------------------------------
+# Re-running this installer (repair, or picking up an updated prod repo) was
+# previously safe only because Cat has always rebooted her PC after
+# installing, which happens to kill the old process. Start-ScheduledTask
+# later in this script is a no-op if the task is already running (Windows
+# Task Scheduler's default MultipleInstances=IgnoreNew policy silently
+# ignores a start request against a running instance) -- without an explicit
+# stop first, a re-run with no reboot would pull new code but leave the old
+# process running it from memory, reporting a false "Middleware is running!"
+# success with the OLD version/build. -ErrorAction SilentlyContinue on the
+# task/process stops: a fresh install has neither yet, and that's fine.
+
+Write-Header "Stopping existing middleware (if running)"
+
+Write-Step "Stopping scheduled task..."
+Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+
+Write-Step "Stopping any lingering Python process..."
+Get-Process python* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
+Write-Step "Clearing __pycache__..."
+Remove-Item -Recurse -Force "$RepoPath\middleware\__pycache__" -ErrorAction SilentlyContinue
+
+Start-Sleep -Seconds 2
+Write-OK "Ready for update"
+
+# ---------------------------------------------------------------------------
 # Clone or update repo
 # ---------------------------------------------------------------------------
 
