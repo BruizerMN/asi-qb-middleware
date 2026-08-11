@@ -852,19 +852,26 @@ def create_or_update_customer(account_number: str, company_name: str, existing_l
             # can show the user its account number (Bill, 2026-08-11: "enough
             # information to find and address the issue"), instead of a bare
             # "name already in use" message.
-            trace.append("CustomerAdd FAILED: code=3100 (duplicate name) -- looking up conflicting record")
-            resp2 = rp.ProcessRequest(ticket, build_customer_name_filter_query(safe_name))
-            root3 = ET.fromstring(resp2)
+            #
+            # Deliberately does NOT issue a new NameFilter query here (tried
+            # once, 2026-08-11 -- NameFilter + ActiveStatus=All made QB reject
+            # the whole request as unparseable, reproduced live by Bill; see
+            # build_customer_name_filter_query()'s docstring). Instead this
+            # searches `root` -- the full customer/job list (ActiveStatus=All)
+            # already fetched above for the AccountNumber scan -- which uses
+            # the same query shape build_customer_list_query() has always used
+            # successfully. Correct as long as nothing else could have created
+            # the conflicting record in QB between that fetch and this Add
+            # attempt, which holds here since both happen within this same
+            # single QB session with no intervening writes.
+            trace.append("CustomerAdd FAILED: code=3100 (duplicate name) -- searching already-fetched customer/job list for the conflict")
             conflict = None
-            for cust in root3.findall(".//CustomerRet"):
+            for cust in root.findall(".//CustomerRet"):
                 if _ascii_safe(cust.findtext("Name") or "").lower() == safe_name.lower():
                     conflict = cust
                     break
             if conflict is None:
-                # Exact Name match not found (e.g. apostrophe/encoding drift) --
-                # fall back to the first NameFilter hit rather than nothing.
-                trace.append("exact Name match not found in NameFilter results -- using first hit as fallback")
-                conflict = root3.find(".//CustomerRet")
+                trace.append("no exact Name match found in the already-fetched list (e.g. apostrophe/encoding drift, or the conflict is itself inactive-and-somehow-still-missing) -- conflict details will be blank")
             return {
                 "action": "duplicate_name",
                 "conflict": {
