@@ -414,6 +414,9 @@ def build_customer_add_job(parent_list_id: str, job_name: str) -> str:
 #   "BILL_ADDRESS" -- a marker; the whole BillAddress group is built by
 #     _build_customer_bill_address() using _CUSTOMER_BILL_ADDRESS_FIELDS'
 #     own internal order below.
+#   "CONTACT_NAME_SPLIT" -- a marker; FirstName/LastName are built by
+#     _build_customer_contact_name() by splitting a single "contact_name"
+#     field at its first space (Bill's design, 2026-08-12).
 #
 # A field is emitted only when fields.get(logical_key) is truthy (present
 # AND non-empty) -- so a currently-unpopulated field (e.g. bill_addr3/4,
@@ -424,6 +427,11 @@ def build_customer_add_job(parent_list_id: str, job_name: str) -> str:
 # both Name (the globally-unique internal list key) and CompanyName
 # (display), and this solution always sets them to the same value.
 #
+# FirstName/LastName sit here (right after CompanyName, before BillAddress)
+# per QB's actual Customer schema order -- confirmed by Bill's Name/
+# CompanyName/BillAddress/Email/AccountNumber build succeeding live,
+# 2026-08-12, though this specific position hasn't been live-tested yet.
+#
 # EXTENDING: add a new (key, path, max_len) tuple below in the correct QB
 # schema position -- see QuickBooks' own CustomerAdd/CustomerMod SDK
 # reference for where a field not listed here belongs. No other code
@@ -431,6 +439,7 @@ def build_customer_add_job(parent_list_id: str, job_name: str) -> str:
 CUSTOMER_FIELD_MAP = [
     ("company_name", "Name", 41),
     ("company_name", "CompanyName", 41),
+    "CONTACT_NAME_SPLIT",
     "BILL_ADDRESS",
     ("email", "Email", None),
     ("account_number", "AccountNumber", 41),
@@ -464,6 +473,28 @@ def _build_customer_bill_address(cust: ET.Element, fields: dict):
             _text(addr, path, safe[:max_len] if max_len else safe)
 
 
+def _build_customer_contact_name(cust: ET.Element, fields: dict):
+    """Emit <FirstName>/<LastName> split from a single "contact_name" field
+    at its first space (Bill's design, 2026-08-12): "Steve Kerkvliet" ->
+    FirstName "Steve", LastName "Kerkvliet"; a single-word name goes
+    entirely into FirstName, LastName left unset. Source is FM's
+    AcctPayableName field (same field this solution already uses for
+    Email, confirmed via layout-mode screenshot, 2026-08-12) -- sent to FM
+    under the logical key "contact_name" since the QB concept is a general
+    contact, not specifically an AP one. 25-char max on both, QB's actual
+    limit for these two fields (unlike the 41-char limit used elsewhere in
+    this table for Name/CompanyName/Address lines)."""
+    raw = fields.get("contact_name")
+    if not raw:
+        return
+    raw = str(raw).strip()
+    first, _, last = raw.partition(" ")
+    _text(cust, "FirstName", _ascii_safe(first)[:25])
+    last = last.strip()
+    if last:
+        _text(cust, "LastName", _ascii_safe(last)[:25])
+
+
 def _build_customer_fields(cust: ET.Element, fields: dict):
     """Emit CUSTOMER_FIELD_MAP's fields onto a CustomerAdd/CustomerMod element,
     in the table's fixed order, from a flat `fields` dict (payload["fields"]
@@ -471,6 +502,9 @@ def _build_customer_fields(cust: ET.Element, fields: dict):
     for entry in CUSTOMER_FIELD_MAP:
         if entry == "BILL_ADDRESS":
             _build_customer_bill_address(cust, fields)
+            continue
+        if entry == "CONTACT_NAME_SPLIT":
+            _build_customer_contact_name(cust, fields)
             continue
         key, path, max_len = entry
         value = fields.get(key)
