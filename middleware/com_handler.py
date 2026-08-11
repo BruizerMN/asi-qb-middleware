@@ -668,7 +668,7 @@ def get_customer_by_account(account_number: str, bypass_cache: bool = False) -> 
         _close_session(rp, ticket)
 
 
-def create_or_update_customer(account_number: str, company_name: str, existing_list_id: str = "") -> dict:
+def create_or_update_customer(account_number: str, fields: dict, existing_list_id: str = "") -> dict:
     """
     "UpdateCreate" entry point for a single top-level QB customer -- unlike
     get_customer_by_account (read-only matching), this function writes to QB.
@@ -676,10 +676,13 @@ def create_or_update_customer(account_number: str, company_name: str, existing_l
     family. Creates the customer if no match is found; updates it (CustomerMod)
     if one is.
 
-    v1 minimal field set (Cat's first-round mapping, 2026-08-11): Name,
-    CompanyName (both set from company_name), AccountNumber. Cat's team is
-    still finalizing the rest of the field mapping -- more fields will be
-    added to build_customer_add()/build_customer_mod() once that's ready.
+    `fields` is a flat dict keyed by qbxml_builder.CUSTOMER_FIELD_MAP's logical
+    field names (company_name, bill_addr1-4, bill_city, bill_state, bill_zip,
+    email, as of 2026-08-11 -- see that table for the authoritative current
+    list and how to add more without a code change). company_name is
+    effectively required -- QB's Name can't be blank. Values are raw/
+    unsanitized here; build_customer_add()/build_customer_mod() ascii-safe
+    and truncate each one internally.
 
     No expected_slug/company param, deliberately -- mirrors get_customer_by_account:
     operates against whichever QB company file is currently open on this
@@ -731,9 +734,12 @@ def create_or_update_customer(account_number: str, company_name: str, existing_l
         slug = _detect_slug(info["name"])
         trace.append(f"session opened; QB company='{info['name']}' (slug={slug!r})")
 
-        safe_name = _ascii_safe(company_name)[:41]
+        safe_name = _ascii_safe(fields.get("company_name", ""))[:41]
         safe_account = _ascii_safe(account_number)[:41]
-        trace.append(f"inputs: account_number={safe_account!r} company_name={safe_name!r} existing_list_id={existing_list_id!r}")
+        trace.append(
+            f"inputs: account_number={safe_account!r} company_name={safe_name!r} "
+            f"existing_list_id={existing_list_id!r} fields={sorted(fields.keys())!r}"
+        )
 
         # --- Stale-link pre-check (Bill's design, 2026-08-11) ---------------
         if existing_list_id:
@@ -791,10 +797,10 @@ def create_or_update_customer(account_number: str, company_name: str, existing_l
             edit_sequence = existing.findtext("EditSequence") or ""
             trace.append(f"AccountNumber scan: found existing match, ListID={list_id!r} -- issuing CustomerMod")
             mod_xml = build_customer_mod({
+                **fields,
                 "list_id": list_id,
                 "edit_sequence": edit_sequence,
-                "name": safe_name,
-                "account_number": safe_account,
+                "account_number": account_number,
             })
             resp = rp.ProcessRequest(ticket, mod_xml)
             root2 = ET.fromstring(resp)
@@ -823,7 +829,7 @@ def create_or_update_customer(account_number: str, company_name: str, existing_l
 
         # Not found -- create.
         trace.append("AccountNumber scan: no match -- issuing CustomerAdd")
-        add_xml = build_customer_add({"name": safe_name, "account_number": safe_account})
+        add_xml = build_customer_add({**fields, "account_number": account_number})
         resp = rp.ProcessRequest(ticket, add_xml)
         root2 = ET.fromstring(resp)
         rs = root2.find(".//CustomerAddRs")

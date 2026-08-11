@@ -379,16 +379,24 @@ def customer_updatecreate():
     Create the QB customer if it doesn't exist (matched by AccountNumber), or
     update it (CustomerMod) if it does.
 
-    v1 minimal field set (Cat's first-round mapping, 2026-08-11 -- her team is
-    still building out the rest): Name + CompanyName (both set from
-    company_name), AccountNumber.
+    Field set is table-driven -- see qbxml_builder.CUSTOMER_FIELD_MAP for the
+    authoritative current list (as of 2026-08-11: company_name, bill_addr1-4,
+    bill_city, bill_state, bill_zip, email) and how to add more without a
+    middleware code change (Bill, 2026-08-11: Cat's team will keep sending
+    more fields over time, potentially "an hour from now or even days" apart
+    -- this table exists specifically so that doesn't mean another deploy
+    each time, as long as the new field is a standard QB Customer field).
 
     Required fields:
-        account_number   — FM customerID value (e.g. "C-18042")
-        company_name     — FM customerCompany value, used for QB Name + CompanyName
-    Optional field:
-        existing_list_id — FM's currently-stored QB_CustomerID, if any. Enables
-                            the stale-link check (see com_handler.create_or_update_customer).
+        account_number    — FM customerID value (e.g. "C-18042")
+        fields.company_name — FM customerCompany_NEW value, used for QB Name + CompanyName
+                            (NOT customerCompany -- that field is a stale legacy
+                            duplicate as of 2026-08-11, confirmed by Bill)
+    Optional:
+        existing_list_id  — FM's currently-stored QB_CustomerID, if any. Enables
+                             the stale-link check (see com_handler.create_or_update_customer).
+        fields.*          — any other CUSTOMER_FIELD_MAP key; absent/empty
+                             values are simply not sent to QB.
 
     Returns:
         {"status": "created", "customer": {"list_id":..., "full_name":..., "account_number":...}, "stale_link": {...} or null}
@@ -414,20 +422,21 @@ def customer_updatecreate():
     """
     data             = request.get_json(force=True, silent=True) or {}
     account_number   = data.get("account_number", "").strip()
-    company_name     = data.get("company_name", "").strip()
+    fields           = data.get("fields") or {}
     existing_list_id = (data.get("existing_list_id") or "").strip()
+    company_name     = (fields.get("company_name") or "").strip()
     if not account_number or not company_name:
-        return jsonify({"status": "error", "error": "account_number and company_name are required"}), 400
+        return jsonify({"status": "error", "error": "account_number and fields.company_name are required"}), 400
 
     _log = {
         "account_number": account_number,
-        "company_name": company_name,
+        "fields": fields,
         "existing_list_id": existing_list_id,
         "status": "error",
     }
 
     try:
-        result = com.create_or_update_customer(account_number, company_name, existing_list_id)
+        result = com.create_or_update_customer(account_number, fields, existing_list_id)
         _log["trace"] = result.get("trace", [])
         _log["stale_link"] = result.get("stale_link")
         if result["action"] == "duplicate_name":

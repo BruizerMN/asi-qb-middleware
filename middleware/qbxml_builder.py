@@ -390,45 +390,129 @@ def build_customer_add_job(parent_list_id: str, job_name: str) -> str:
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 
-def build_customer_add(payload: dict) -> str:
+# ---------------------------------------------------------------------------
+# QB Customer field map (2026-08-11)
+#
+# One reusable, order-aware table driving both CustomerAdd and CustomerMod --
+# they share the identical field shape. Built to make adding a new QB
+# Customer field a DATA change, not a code change: qbXML is strict about
+# element order (confirmed the hard way, 2026-08-11 -- an unsupported
+# NameFilter+ActiveStatus combination elsewhere in this file made QB reject
+# a request outright rather than return a clean rejection), so a flat,
+# order-preserving table is what lets a future field just be another row
+# here instead of requiring careful re-verification of QB's schema order
+# each time. Cat's team is expected to keep sending more fields over time
+# (Bill, 2026-08-11) -- this table is sized to make that painless.
+#
+# Each entry is either:
+#   (logical_key, xml_path, max_len_or_None) -- a simple field. logical_key
+#     is what FM sends inside payload["fields"]; xml_path is the element name
+#     directly under CustomerAdd/CustomerMod; max_len truncates (QB's real
+#     limits, matching the same values already used for invoice/SO
+#     addresses in _build_bill_to/_build_ship_to above) or None to skip
+#     truncation.
+#   "BILL_ADDRESS" -- a marker; the whole BillAddress group is built by
+#     _build_customer_bill_address() using _CUSTOMER_BILL_ADDRESS_FIELDS'
+#     own internal order below.
+#
+# A field is emitted only when fields.get(logical_key) is truthy (present
+# AND non-empty) -- so a currently-unpopulated field (e.g. bill_addr3/4,
+# not yet exposed in FM's UI as of 2026-08-11) is silently skipped rather
+# than emitted empty, and costs nothing to leave wired in ahead of need.
+#
+# name/company_name is duplicated on purpose -- QB's CustomerAdd requires
+# both Name (the globally-unique internal list key) and CompanyName
+# (display), and this solution always sets them to the same value.
+#
+# EXTENDING: add a new (key, path, max_len) tuple below in the correct QB
+# schema position -- see QuickBooks' own CustomerAdd/CustomerMod SDK
+# reference for where a field not listed here belongs. No other code
+# changes needed once FM starts sending that key.
+CUSTOMER_FIELD_MAP = [
+    ("company_name", "Name", 41),
+    ("company_name", "CompanyName", 41),
+    "BILL_ADDRESS",
+    ("email", "Email", None),
+    ("account_number", "AccountNumber", 41),
+]
+
+# BillAddress's own internal element order (QB's standard Address aggregate,
+# reused across Customer/Invoice/SalesOrder/etc.) -- Addr1-Addr5, then City/
+# State/PostalCode. FM has four address-line fields (customerAddress1-4);
+# nothing maps to a fifth since FM has no fifth field, not a gap on our end.
+_CUSTOMER_BILL_ADDRESS_FIELDS = [
+    ("bill_addr1", "Addr1", 41),
+    ("bill_addr2", "Addr2", 41),
+    ("bill_addr3", "Addr3", 41),
+    ("bill_addr4", "Addr4", 41),
+    ("bill_city", "City", 31),
+    ("bill_state", "State", 21),
+    ("bill_zip", "PostalCode", 13),
+]
+
+
+def _build_customer_bill_address(cust: ET.Element, fields: dict):
+    """Emit <BillAddress>...</BillAddress> if at least one address field is
+    present -- an empty BillAddress element is pointless and QB doesn't need it."""
+    if not any(fields.get(key) for key, _path, _max in _CUSTOMER_BILL_ADDRESS_FIELDS):
+        return
+    addr = ET.SubElement(cust, "BillAddress")
+    for key, path, max_len in _CUSTOMER_BILL_ADDRESS_FIELDS:
+        value = fields.get(key)
+        if value:
+            safe = _ascii_safe(str(value))
+            _text(addr, path, safe[:max_len] if max_len else safe)
+
+
+def _build_customer_fields(cust: ET.Element, fields: dict):
+    """Emit CUSTOMER_FIELD_MAP's fields onto a CustomerAdd/CustomerMod element,
+    in the table's fixed order, from a flat `fields` dict (payload["fields"]
+    merged with account_number by the caller -- see com_handler.create_or_update_customer)."""
+    for entry in CUSTOMER_FIELD_MAP:
+        if entry == "BILL_ADDRESS":
+            _build_customer_bill_address(cust, fields)
+            continue
+        key, path, max_len = entry
+        value = fields.get(key)
+        if value:
+            safe = _ascii_safe(str(value))
+            _text(cust, path, safe[:max_len] if max_len else safe)
+
+
+def build_customer_add(fields: dict) -> str:
     """Return a qbXML CustomerAdd request for a new top-level QB customer.
 
-    v1 minimal field set (Cat's first-round mapping, 2026-08-11 -- her team
-    is still building out the rest): Name and CompanyName both set from the
-    same FM company-name value, AccountNumber set from FM's customerID. Name
-    is QB's globally-unique internal list key (<=41 chars) -- collisions
+    `fields` is a flat dict keyed by CUSTOMER_FIELD_MAP's logical field names
+    (see that table for the full current field set and how to extend it).
+    Name is QB's globally-unique internal list key (<=41 chars) -- collisions
     raise QB error 3100, handled by the caller (com_handler.create_or_update_customer).
     """
     root = ET.Element("QBXML")
     msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
     req = ET.SubElement(msgs, "CustomerAddRq", requestID="1")
     cust = ET.SubElement(req, "CustomerAdd")
-    name = _ascii_safe(payload["name"])[:41]
-    _text(cust, "Name", name)
-    _text(cust, "CompanyName", name)
-    _text(cust, "AccountNumber", _ascii_safe(payload["account_number"])[:41])
+    _build_customer_fields(cust, fields)
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 
-def build_customer_mod(payload: dict) -> str:
-    """Return a qbXML CustomerMod request updating Name/CompanyName/AccountNumber
-    on an existing top-level QB customer.
+def build_customer_mod(fields: dict) -> str:
+    """Return a qbXML CustomerMod request updating an existing top-level QB
+    customer's fields (see CUSTOMER_FIELD_MAP for the full current set).
 
-    Requires payload["list_id"] and payload["edit_sequence"] -- QB's
+    Requires fields["list_id"] and fields["edit_sequence"] -- QB's
     optimistic-lock token, fetched immediately before this call (see
     com_handler.create_or_update_customer). A stale EditSequence causes QB
     to reject the request rather than silently overwrite a concurrent edit.
+    ListID/EditSequence are handled directly here, not via CUSTOMER_FIELD_MAP,
+    since they're QB's own identity/locking tokens, not synced customer data.
     """
     root = ET.Element("QBXML")
     msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
     req = ET.SubElement(msgs, "CustomerModRq", requestID="1")
     cust = ET.SubElement(req, "CustomerMod")
-    _text(cust, "ListID", payload["list_id"])
-    _text(cust, "EditSequence", payload["edit_sequence"])
-    name = _ascii_safe(payload["name"])[:41]
-    _text(cust, "Name", name)
-    _text(cust, "CompanyName", name)
-    _text(cust, "AccountNumber", _ascii_safe(payload["account_number"])[:41])
+    _text(cust, "ListID", fields["list_id"])
+    _text(cust, "EditSequence", fields["edit_sequence"])
+    _build_customer_fields(cust, fields)
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 
