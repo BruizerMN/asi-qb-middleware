@@ -417,6 +417,14 @@ def build_customer_add_job(parent_list_id: str, job_name: str) -> str:
 #   "CONTACT_NAME_SPLIT" -- a marker; FirstName/LastName are built by
 #     _build_customer_contact_name() by splitting a single "contact_name"
 #     field at its first space (Bill's design, 2026-08-12).
+#   "ALWAYS_ACTIVE" -- a marker; always emits <IsActive>true</IsActive>,
+#     unconditionally, regardless of the fields dict. Cat's explicit
+#     instruction, 2026-08-12 (relayed by Bill): reactivate/undelete any
+#     customer we touch "without a fuss or notice" -- she confirmed this is
+#     safe since her team deletes/inactivates customers in QB exceedingly
+#     rarely. Confirmed empirically the same day that IsActive=true resolves
+#     BOTH plain-inactive and QB's separate "deleted" (red-X) state via the
+#     same mechanism -- see com_handler.diagnostic_reactivate_customer().
 #
 # A field is emitted only when fields.get(logical_key) is truthy (present
 # AND non-empty) -- so a currently-unpopulated field (e.g. bill_addr3/4,
@@ -438,6 +446,7 @@ def build_customer_add_job(parent_list_id: str, job_name: str) -> str:
 # changes needed once FM starts sending that key.
 CUSTOMER_FIELD_MAP = [
     ("company_name", "Name", 41),
+    "ALWAYS_ACTIVE",
     ("company_name", "CompanyName", 41),
     "CONTACT_NAME_SPLIT",
     "BILL_ADDRESS",
@@ -447,23 +456,37 @@ CUSTOMER_FIELD_MAP = [
 
 # BillAddress's own internal element order (QB's standard Address aggregate,
 # reused across Customer/Invoice/SalesOrder/etc.) -- Addr1-Addr5, then City/
-# State/PostalCode. FM has four address-line fields (customerAddress1-4);
-# nothing maps to a fifth since FM has no fifth field, not a gap on our end.
+# State/PostalCode. Company name goes in Addr1 (Cat's explicit instruction,
+# 2026-08-12, from her annotated screenshot -- the Bill To block's first row
+# should be the company name, not the street), pushing FM's four address
+# lines to Addr2-Addr5 -- uses all five available lines, none wasted.
 _CUSTOMER_BILL_ADDRESS_FIELDS = [
-    ("bill_addr1", "Addr1", 41),
-    ("bill_addr2", "Addr2", 41),
-    ("bill_addr3", "Addr3", 41),
-    ("bill_addr4", "Addr4", 41),
+    ("company_name", "Addr1", 41),
+    ("bill_addr1", "Addr2", 41),
+    ("bill_addr2", "Addr3", 41),
+    ("bill_addr3", "Addr4", 41),
+    ("bill_addr4", "Addr5", 41),
     ("bill_city", "City", 31),
     ("bill_state", "State", 21),
     ("bill_zip", "PostalCode", 13),
 ]
 
+# Which of _CUSTOMER_BILL_ADDRESS_FIELDS' keys actually indicate "there's a
+# real address to report" -- company_name is deliberately excluded here even
+# though it's one of the emitted lines, since company_name is present on
+# nearly every customer and its presence alone shouldn't trigger an
+# otherwise-empty BillAddress block.
+_CUSTOMER_BILL_ADDRESS_PRESENCE_KEYS = (
+    "bill_addr1", "bill_addr2", "bill_addr3", "bill_addr4",
+    "bill_city", "bill_state", "bill_zip",
+)
+
 
 def _build_customer_bill_address(cust: ET.Element, fields: dict):
-    """Emit <BillAddress>...</BillAddress> if at least one address field is
-    present -- an empty BillAddress element is pointless and QB doesn't need it."""
-    if not any(fields.get(key) for key, _path, _max in _CUSTOMER_BILL_ADDRESS_FIELDS):
+    """Emit <BillAddress>...</BillAddress> if at least one real address field
+    is present -- an empty BillAddress element (or one with only the company
+    name and no actual address) is pointless and QB doesn't need it."""
+    if not any(fields.get(key) for key in _CUSTOMER_BILL_ADDRESS_PRESENCE_KEYS):
         return
     addr = ET.SubElement(cust, "BillAddress")
     for key, path, max_len in _CUSTOMER_BILL_ADDRESS_FIELDS:
@@ -505,6 +528,9 @@ def _build_customer_fields(cust: ET.Element, fields: dict):
             continue
         if entry == "CONTACT_NAME_SPLIT":
             _build_customer_contact_name(cust, fields)
+            continue
+        if entry == "ALWAYS_ACTIVE":
+            _text(cust, "IsActive", "true")
             continue
         key, path, max_len = entry
         value = fields.get(key)

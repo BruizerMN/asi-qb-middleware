@@ -30,10 +30,13 @@ from .qbxml_builder import (
 
 APP_NAME = "ASI QB Middleware"
 
-# QB status code for "This list has been modified by another user" -- a
+# QB status codes for "This list has been modified by another user" -- a
 # transient multi-user list-lock conflict, not a real rejection. See
-# ensure_customer_job() for where this is retried.
-_LIST_CONFLICT_CODE = "3180"
+# ensure_customer_job() and create_or_update_customer() for where this is
+# retried. 3170 confirmed as another code for the same underlying condition
+# 2026-08-12 -- reproduced live via CustomerMod (diagnostic_reactivate_customer),
+# not just the CustomerAdd path 3180 was originally found on.
+_LIST_CONFLICT_CODES = ("3180", "3170")
 _LIST_CONFLICT_MAX_ATTEMPTS = 3
 _LIST_CONFLICT_RETRY_DELAY = 1.5  # seconds
 
@@ -374,7 +377,7 @@ def ensure_customer_job(
                 # searching for the job by Name field + parent ListID match.
                 existing_id = _find_job_list_id(rp, ticket, parent_list_id, job_name)
                 return job_name_used, existing_id
-            elif code == _LIST_CONFLICT_CODE and attempt < _LIST_CONFLICT_MAX_ATTEMPTS:
+            elif code in _LIST_CONFLICT_CODES and attempt < _LIST_CONFLICT_MAX_ATTEMPTS:
                 # "This list has been modified by another user" -- a transient
                 # multi-user contention error, not a real rejection. Each
                 # workstation runs its own independent QB session, so this can
@@ -802,9 +805,19 @@ def create_or_update_customer(account_number: str, fields: dict, existing_list_i
                 "edit_sequence": edit_sequence,
                 "account_number": account_number,
             })
-            resp = rp.ProcessRequest(ticket, mod_xml)
-            root2 = ET.fromstring(resp)
-            rs = root2.find(".//CustomerModRs")
+            rs = None
+            for attempt in range(1, _LIST_CONFLICT_MAX_ATTEMPTS + 1):
+                resp = rp.ProcessRequest(ticket, mod_xml)
+                root2 = ET.fromstring(resp)
+                rs = root2.find(".//CustomerModRs")
+                code = rs.get("statusCode", "") if rs is not None else ""
+                if code == "0":
+                    break
+                if code in _LIST_CONFLICT_CODES and attempt < _LIST_CONFLICT_MAX_ATTEMPTS:
+                    trace.append(f"CustomerMod hit transient list-lock conflict (code={code}), retrying (attempt {attempt}/{_LIST_CONFLICT_MAX_ATTEMPTS})")
+                    time.sleep(_LIST_CONFLICT_RETRY_DELAY)
+                    continue
+                break
             if rs is None or rs.get("statusCode", "") != "0":
                 msg  = rs.get("statusMessage", "no response") if rs is not None else "no response"
                 code = rs.get("statusCode", "?") if rs is not None else "?"
@@ -830,9 +843,17 @@ def create_or_update_customer(account_number: str, fields: dict, existing_list_i
         # Not found -- create.
         trace.append("AccountNumber scan: no match -- issuing CustomerAdd")
         add_xml = build_customer_add({**fields, "account_number": account_number})
-        resp = rp.ProcessRequest(ticket, add_xml)
-        root2 = ET.fromstring(resp)
-        rs = root2.find(".//CustomerAddRs")
+        rs = None
+        for attempt in range(1, _LIST_CONFLICT_MAX_ATTEMPTS + 1):
+            resp = rp.ProcessRequest(ticket, add_xml)
+            root2 = ET.fromstring(resp)
+            rs = root2.find(".//CustomerAddRs")
+            code = rs.get("statusCode", "") if rs is not None else ""
+            if code in _LIST_CONFLICT_CODES and attempt < _LIST_CONFLICT_MAX_ATTEMPTS:
+                trace.append(f"CustomerAdd hit transient list-lock conflict (code={code}), retrying (attempt {attempt}/{_LIST_CONFLICT_MAX_ATTEMPTS})")
+                time.sleep(_LIST_CONFLICT_RETRY_DELAY)
+                continue
+            break
         if rs is None:
             trace.append("CustomerAdd FAILED: no CustomerAddRs in response")
             raise RuntimeError(f"No CustomerAddRs in QB response. | trace: {' > '.join(trace)}")
