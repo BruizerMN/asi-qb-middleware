@@ -864,6 +864,18 @@ def create_or_update_customer(account_number: str, company_name: str, existing_l
             # the conflicting record in QB between that fetch and this Add
             # attempt, which holds here since both happen within this same
             # single QB session with no intervening writes.
+            #
+            # Only searches Customers/Jobs -- QB actually enforces Name
+            # uniqueness across Customers, Vendors, Employees, and Other Names
+            # together, so a 3100 can come from any of those. Reproduced live
+            # 2026-08-11 (Bill, testing against "KVC, Inc." -- likely an
+            # existing Vendor). Deliberately NOT chasing that down with new
+            # VendorQueryRq/EmployeeQueryRq/OtherNameQueryRq support -- Bill's
+            # call, 2026-08-11: expected to be rare, and the person running
+            # this middleware may not even have QB permission to see Vendors
+            # (confirmed true for Bill's own login), which would undermine an
+            # automated search anyway. QB's own statusMessage is included
+            # below instead -- cheap, and often already says something useful.
             trace.append("CustomerAdd FAILED: code=3100 (duplicate name) -- searching already-fetched customer/job list for the conflict")
             conflict = None
             for cust in root.findall(".//CustomerRet"):
@@ -871,7 +883,7 @@ def create_or_update_customer(account_number: str, company_name: str, existing_l
                     conflict = cust
                     break
             if conflict is None:
-                trace.append("no exact Name match found in the already-fetched list (e.g. apostrophe/encoding drift, or the conflict is itself inactive-and-somehow-still-missing) -- conflict details will be blank")
+                trace.append("no exact Name match found among Customers/Jobs -- likely a Vendor/Employee/Other Name collision instead; conflict details will be blank, qb_message carries QB's own text")
             return {
                 "action": "duplicate_name",
                 "conflict": {
@@ -879,6 +891,7 @@ def create_or_update_customer(account_number: str, company_name: str, existing_l
                     "full_name":      _ascii_safe((conflict.findtext("FullName") if conflict is not None else "") or ""),
                     "account_number": (conflict.findtext("AccountNumber") if conflict is not None else "") or "",
                 },
+                "qb_message": rs.get("statusMessage", ""),
                 "stale_link": stale_link,
                 "trace": trace,
             }

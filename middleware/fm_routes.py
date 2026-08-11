@@ -393,13 +393,17 @@ def customer_updatecreate():
     Returns:
         {"status": "created", "customer": {"list_id":..., "full_name":..., "account_number":...}, "stale_link": {...} or null}
         {"status": "updated",  "customer": {...same shape}, "stale_link": {...} or null}
-        {"status": "duplicate_name", "conflict": {"list_id":..., "full_name":..., "account_number":...}, "stale_link": {...} or null}
+        {"status": "duplicate_name", "conflict": {"list_id":..., "full_name":..., "account_number":...}, "qb_message": "...", "stale_link": {...} or null}
         {"status": "error",    "error": "..."}
 
-    "duplicate_name" means QB already has a different customer/job using the
-    same Name (error 3100) -- "conflict" identifies that existing record
-    (including its account_number) so the FM user has enough information to
-    find and resolve it in QB.
+    "duplicate_name" means QB already has a different record using the same
+    Name (error 3100) -- "conflict" identifies that record if it's a
+    Customer/Job FM can see, but QB actually enforces Name uniqueness across
+    Customers, Vendors, Employees, and Other Names together, so "conflict"
+    may come back empty if the collision is with one of those other list
+    types (confirmed to happen live, 2026-08-11). "qb_message" always carries
+    QuickBooks' own statusMessage text regardless, since it may say more than
+    our own lookup can determine.
 
     "stale_link" is non-null when existing_list_id was provided but no longer
     matches account_number in QB -- the link was cleared and normal matching
@@ -430,10 +434,12 @@ def customer_updatecreate():
             _log.update({
                 "status": "duplicate_name",
                 "conflict_account_number": result["conflict"].get("account_number", ""),
+                "qb_message": result.get("qb_message", ""),
             })
             return jsonify({
                 "status": "duplicate_name",
                 "conflict": result["conflict"],
+                "qb_message": result.get("qb_message", ""),
                 "stale_link": result.get("stale_link"),
             })
         _log.update({"status": result["action"], "list_id": result["customer"].get("list_id", "")})
