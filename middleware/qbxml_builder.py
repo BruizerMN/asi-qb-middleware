@@ -339,13 +339,24 @@ def build_customer_name_filter_query(name: str) -> str:
     """Find customers/jobs whose Name field contains the given string.
     Name is the last segment only (no parent prefix), so this works even
     when the full FullName has apostrophe encoding issues.
-    Used to recover a job's ListID after a 3100 'already exists' error."""
+    Used to recover a job's ListID after a 3100 'already exists' error, and
+    to identify the conflicting record for a duplicate-name CustomerAdd.
+
+    ActiveStatus=All (2026-08-11) -- without it, QB's default excludes
+    inactive records, same blind spot already fixed once in this project
+    for build_customer_list_query() (see get_customer_by_account()'s
+    docstring). A 3100 rejection can absolutely be caused by an inactive
+    record QB Desktop's own Customer Center hides by default too -- without
+    this, the follow-up lookup here would find nothing and return an
+    all-empty conflict (name/account number both "") instead of surfacing
+    the record that's actually blocking the create."""
     root = ET.Element("QBXML")
     msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
     req = ET.SubElement(msgs, "CustomerQueryRq", requestID="1")
     f = ET.SubElement(req, "NameFilter")
     _text(f, "MatchCriterion", "Contains")
     _text(f, "Name", _ascii_safe(name))
+    _text(req, "ActiveStatus", "All")
     _text(req, "OwnerID", "0")
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
