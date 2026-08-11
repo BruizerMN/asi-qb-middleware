@@ -668,7 +668,7 @@ def get_customer_by_account(account_number: str, bypass_cache: bool = False) -> 
         _close_session(rp, ticket)
 
 
-def create_or_update_customer(account_number: str, company_name: str) -> dict:
+def create_or_update_customer(account_number: str, company_name: str, existing_list_id: str = "") -> dict:
     """
     "UpdateCreate" entry point for a single top-level QB customer -- unlike
     get_customer_by_account (read-only matching), this function writes to QB.
@@ -688,27 +688,92 @@ def create_or_update_customer(account_number: str, company_name: str) -> dict:
     open via its own earlier check, so a second verification here would be
     redundant.
 
+    existing_list_id (2026-08-11, Bill's design): FM's currently-stored
+    QB_CustomerID, if any. When provided, it's validated FIRST via a direct
+    ListID query (cheap, exact, immune to the AccountNumber-scan finding a
+    stale/wrong match): if the returned record's AccountNumber still matches
+    `account_number`, nothing changes and normal matching proceeds as usual.
+    If it does NOT match -- the FM-side link has gone stale (e.g. someone
+    manually corrected the account number in QB without re-syncing FM) --
+    the mismatch is recorded in the returned "stale_link" dict and the
+    function proceeds exactly as if no link had ever existed. Deliberately
+    does NOT try to "repair" the stale record (e.g. push FM's account number
+    onto it) -- that would risk silently overwriting a genuinely different
+    QB customer if the old link was simply wrong to begin with. Worst case
+    of this conservative approach: an orphaned old QB record plus a new one,
+    which a human can notice and merge -- safer than guessing.
+
+    Every step is appended to the returned "trace" list (Bill, 2026-08-11:
+    "verbosely log everything... if it were to go sideways, we'll need as
+    much info as we can get our hands on") -- callers should always log the
+    full trace, not just the summary fields.
+
     Returns one of:
-      {"action": "created", "customer": {list_id, full_name, account_number}}
-      {"action": "updated", "customer": {list_id, full_name, account_number}}
-      {"action": "duplicate_name", "conflict": {list_id, full_name, account_number}}
+      {"action": "created", "customer": {list_id, full_name, account_number},
+       "stale_link": {...} or None, "trace": [...]}
+      {"action": "updated", "customer": {list_id, full_name, account_number},
+       "stale_link": {...} or None, "trace": [...]}
+      {"action": "duplicate_name", "conflict": {list_id, full_name, account_number},
+       "stale_link": {...} or None, "trace": [...]}
         -- QB rejected the CustomerAdd because another customer/job already
            owns that Name (error 3100). "conflict" identifies the existing
            record so the FM user has enough information to find and resolve
            it in QB, rather than a bare "name already in use" message.
-    Raises RuntimeError on any other QB rejection or connection failure.
+    Raises RuntimeError on any other QB rejection or connection failure --
+    the trace-so-far is appended to the exception message so it isn't lost.
     """
+    trace = []
+    stale_link = None
+
     rp, ticket = _open_session()
     try:
         info = _get_company_info(rp, ticket)
         slug = _detect_slug(info["name"])
+        trace.append(f"session opened; QB company='{info['name']}' (slug={slug!r})")
 
         safe_name = _ascii_safe(company_name)[:41]
         safe_account = _ascii_safe(account_number)[:41]
+        trace.append(f"inputs: account_number={safe_account!r} company_name={safe_name!r} existing_list_id={existing_list_id!r}")
 
+        # --- Stale-link pre-check (Bill's design, 2026-08-11) ---------------
+        if existing_list_id:
+            trace.append(f"validating existing_list_id={existing_list_id!r} via direct ListID query")
+            val_resp = rp.ProcessRequest(ticket, build_customer_query_by_list_id(existing_list_id))
+            val_root = ET.fromstring(val_resp)
+            val_cust = val_root.find(".//CustomerRet")
+            if val_cust is None:
+                trace.append("ListID not found in QB (deleted/never existed?) -- treating as unlinked")
+                stale_link = {
+                    "cleared": True,
+                    "reason": "list_id_not_found",
+                    "old_list_id": existing_list_id,
+                    "old_account_number": None,
+                    "fm_account_number": safe_account,
+                }
+            else:
+                qb_account = (val_cust.findtext("AccountNumber") or "").strip().lower()
+                if qb_account == safe_account.strip().lower():
+                    trace.append(f"ListID validated OK -- QB AccountNumber={qb_account!r} matches FM, link still good")
+                else:
+                    trace.append(
+                        f"ListID STALE -- QB AccountNumber={qb_account!r} does not match FM "
+                        f"account_number={safe_account!r}; clearing link, will re-derive via AccountNumber scan"
+                    )
+                    stale_link = {
+                        "cleared": True,
+                        "reason": "account_number_mismatch",
+                        "old_list_id": existing_list_id,
+                        "old_account_number": val_cust.findtext("AccountNumber") or "",
+                        "fm_account_number": safe_account,
+                    }
+        else:
+            trace.append("no existing_list_id provided -- skipping ListID validation (first-time link/create)")
+
+        # --- Standard AccountNumber-based match-or-create --------------------
         # Full fetch (ActiveStatus=All) -- QB has no AccountNumber filter, and
         # an existing-but-inactive match must still be treated as "exists"
         # (CustomerMod), not "not found" -- same reasoning as get_customer_by_account.
+        trace.append("fetching full customer list (ActiveStatus=All) for AccountNumber scan")
         response = rp.ProcessRequest(ticket, build_customer_list_query("All"))
         root = ET.fromstring(response)
         target = safe_account.strip().lower()
@@ -724,6 +789,7 @@ def create_or_update_customer(account_number: str, company_name: str) -> dict:
         if existing is not None:
             list_id = existing.findtext("ListID") or ""
             edit_sequence = existing.findtext("EditSequence") or ""
+            trace.append(f"AccountNumber scan: found existing match, ListID={list_id!r} -- issuing CustomerMod")
             mod_xml = build_customer_mod({
                 "list_id": list_id,
                 "edit_sequence": edit_sequence,
@@ -736,7 +802,11 @@ def create_or_update_customer(account_number: str, company_name: str) -> dict:
             if rs is None or rs.get("statusCode", "") != "0":
                 msg  = rs.get("statusMessage", "no response") if rs is not None else "no response"
                 code = rs.get("statusCode", "?") if rs is not None else "?"
-                raise RuntimeError(f"QuickBooks rejected the customer update: {msg} (code {code})")
+                trace.append(f"CustomerMod FAILED: code={code} msg={msg!r}")
+                raise RuntimeError(
+                    f"QuickBooks rejected the customer update: {msg} (code {code}) | trace: {' > '.join(trace)}"
+                )
+            trace.append("CustomerMod succeeded")
             ret = root2.find(".//CustomerRet")
             if slug:
                 _customer_cache.pop(slug, None)
@@ -747,18 +817,23 @@ def create_or_update_customer(account_number: str, company_name: str) -> dict:
                     "full_name":      _ascii_safe((ret.findtext("FullName") if ret is not None else "") or safe_name),
                     "account_number": (ret.findtext("AccountNumber") if ret is not None else "") or safe_account,
                 },
+                "stale_link": stale_link,
+                "trace": trace,
             }
 
         # Not found -- create.
+        trace.append("AccountNumber scan: no match -- issuing CustomerAdd")
         add_xml = build_customer_add({"name": safe_name, "account_number": safe_account})
         resp = rp.ProcessRequest(ticket, add_xml)
         root2 = ET.fromstring(resp)
         rs = root2.find(".//CustomerAddRs")
         if rs is None:
-            raise RuntimeError("No CustomerAddRs in QB response.")
+            trace.append("CustomerAdd FAILED: no CustomerAddRs in response")
+            raise RuntimeError(f"No CustomerAddRs in QB response. | trace: {' > '.join(trace)}")
 
         code = rs.get("statusCode", "")
         if code == "0":
+            trace.append("CustomerAdd succeeded")
             ret = root2.find(".//CustomerRet")
             if slug:
                 _customer_cache.pop(slug, None)
@@ -769,12 +844,15 @@ def create_or_update_customer(account_number: str, company_name: str) -> dict:
                     "full_name":      _ascii_safe((ret.findtext("FullName") if ret is not None else "") or safe_name),
                     "account_number": (ret.findtext("AccountNumber") if ret is not None else "") or safe_account,
                 },
+                "stale_link": stale_link,
+                "trace": trace,
             }
         elif code == "3100":
             # Name collision -- look up the conflicting record by Name so FM
             # can show the user its account number (Bill, 2026-08-11: "enough
             # information to find and address the issue"), instead of a bare
             # "name already in use" message.
+            trace.append("CustomerAdd FAILED: code=3100 (duplicate name) -- looking up conflicting record")
             resp2 = rp.ProcessRequest(ticket, build_customer_name_filter_query(safe_name))
             root3 = ET.fromstring(resp2)
             conflict = None
@@ -785,6 +863,7 @@ def create_or_update_customer(account_number: str, company_name: str) -> dict:
             if conflict is None:
                 # Exact Name match not found (e.g. apostrophe/encoding drift) --
                 # fall back to the first NameFilter hit rather than nothing.
+                trace.append("exact Name match not found in NameFilter results -- using first hit as fallback")
                 conflict = root3.find(".//CustomerRet")
             return {
                 "action": "duplicate_name",
@@ -793,11 +872,14 @@ def create_or_update_customer(account_number: str, company_name: str) -> dict:
                     "full_name":      _ascii_safe((conflict.findtext("FullName") if conflict is not None else "") or ""),
                     "account_number": (conflict.findtext("AccountNumber") if conflict is not None else "") or "",
                 },
+                "stale_link": stale_link,
+                "trace": trace,
             }
         else:
             msg = rs.get("statusMessage", "Unknown error")
+            trace.append(f"CustomerAdd FAILED: code={code} msg={msg!r}")
             raise RuntimeError(
-                f"QuickBooks rejected customer creation for '{safe_name}': {msg} (code {code})"
+                f"QuickBooks rejected customer creation for '{safe_name}': {msg} (code {code}) | trace: {' > '.join(trace)}"
             )
 
     finally:

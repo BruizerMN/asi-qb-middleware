@@ -384,38 +384,64 @@ def customer_updatecreate():
     company_name), AccountNumber.
 
     Required fields:
-        account_number — FM customerID value (e.g. "C-18042")
-        company_name   — FM customerCompany value, used for QB Name + CompanyName
+        account_number   — FM customerID value (e.g. "C-18042")
+        company_name     — FM customerCompany value, used for QB Name + CompanyName
+    Optional field:
+        existing_list_id — FM's currently-stored QB_CustomerID, if any. Enables
+                            the stale-link check (see com_handler.create_or_update_customer).
 
     Returns:
-        {"status": "created", "customer": {"list_id":..., "full_name":..., "account_number":...}}
-        {"status": "updated",  "customer": {...same shape}}
-        {"status": "duplicate_name", "conflict": {"list_id":..., "full_name":..., "account_number":...}}
+        {"status": "created", "customer": {"list_id":..., "full_name":..., "account_number":...}, "stale_link": {...} or null}
+        {"status": "updated",  "customer": {...same shape}, "stale_link": {...} or null}
+        {"status": "duplicate_name", "conflict": {"list_id":..., "full_name":..., "account_number":...}, "stale_link": {...} or null}
         {"status": "error",    "error": "..."}
 
     "duplicate_name" means QB already has a different customer/job using the
     same Name (error 3100) -- "conflict" identifies that existing record
     (including its account_number) so the FM user has enough information to
     find and resolve it in QB.
+
+    "stale_link" is non-null when existing_list_id was provided but no longer
+    matches account_number in QB -- the link was cleared and normal matching
+    ran fresh instead. Every response (including errors) is logged with the
+    full step-by-step "trace" from com_handler -- Bill, 2026-08-11: verbose
+    logging here on purpose, "if it were to go sideways" this is the one
+    place to find out why.
     """
-    data           = request.get_json(force=True, silent=True) or {}
-    account_number = data.get("account_number", "").strip()
-    company_name   = data.get("company_name", "").strip()
+    data             = request.get_json(force=True, silent=True) or {}
+    account_number   = data.get("account_number", "").strip()
+    company_name     = data.get("company_name", "").strip()
+    existing_list_id = (data.get("existing_list_id") or "").strip()
     if not account_number or not company_name:
         return jsonify({"status": "error", "error": "account_number and company_name are required"}), 400
 
-    _log = {"account_number": account_number, "company_name": company_name, "status": "error"}
+    _log = {
+        "account_number": account_number,
+        "company_name": company_name,
+        "existing_list_id": existing_list_id,
+        "status": "error",
+    }
 
     try:
-        result = com.create_or_update_customer(account_number, company_name)
+        result = com.create_or_update_customer(account_number, company_name, existing_list_id)
+        _log["trace"] = result.get("trace", [])
+        _log["stale_link"] = result.get("stale_link")
         if result["action"] == "duplicate_name":
             _log.update({
                 "status": "duplicate_name",
                 "conflict_account_number": result["conflict"].get("account_number", ""),
             })
-            return jsonify({"status": "duplicate_name", "conflict": result["conflict"]})
+            return jsonify({
+                "status": "duplicate_name",
+                "conflict": result["conflict"],
+                "stale_link": result.get("stale_link"),
+            })
         _log.update({"status": result["action"], "list_id": result["customer"].get("list_id", "")})
-        return jsonify({"status": result["action"], "customer": result["customer"]})
+        return jsonify({
+            "status": result["action"],
+            "customer": result["customer"],
+            "stale_link": result.get("stale_link"),
+        })
     except RuntimeError as e:
         _log["error"] = str(e)
         return jsonify({"status": "error", "error": str(e)}), 422
