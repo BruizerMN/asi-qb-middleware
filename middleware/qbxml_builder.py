@@ -550,6 +550,27 @@ def build_customer_mod(fields: dict) -> str:
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 
+def build_customer_reactivate(list_id: str, edit_sequence: str) -> str:
+    """DIAGNOSTIC ONLY (2026-08-12) -- return a qbXML CustomerMod that sets
+    IsActive=true and touches nothing else. Built to answer one specific
+    open question empirically: does IsActive=true also resolve QB's
+    separate "deleted" state (distinct from plain inactive -- confirmed by
+    Bill, 2026-08-12: QB Desktop shows a red-X marker and a distinct "would
+    you like to undelete it?" prompt for deleted customers, not just the
+    plain inactive checkbox), or does it only reactivate plain-inactive
+    ones? Not wired into any production create/update path -- see
+    com_handler.diagnostic_reactivate_customer() / the
+    /fm/debug-reactivate-customer route for how this gets used."""
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "CustomerModRq", requestID="1")
+    cust = ET.SubElement(req, "CustomerMod")
+    _text(cust, "ListID", list_id)
+    _text(cust, "EditSequence", edit_sequence)
+    _text(cust, "IsActive", "true")
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
 def _build_bill_to(parent: ET.Element, payload: dict):
     if not payload.get("bill_to_name"):
         return

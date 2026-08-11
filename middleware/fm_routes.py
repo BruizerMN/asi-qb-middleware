@@ -17,6 +17,7 @@ Endpoints:
     GET  /fm/view-invoice   — render a posted invoice as HTML
     GET  /fm/view-sales-order — render a posted sales order as HTML
     GET  /fm/debug-query-raw — return raw qbXML for an existing invoice/SO (dev only)
+    GET  /fm/debug-reactivate-customer — one-off diagnostic: does IsActive=true undelete? (dev only)
 """
 
 import html as _html
@@ -646,6 +647,37 @@ def view_sales_order():
         return f"<h1 style='font-family:Arial'>Error</h1><p style='font-family:Arial'>{_html.escape(str(e))}</p>", 422
     except Exception as e:
         return f"<h1 style='font-family:Arial'>Unexpected Error</h1><p style='font-family:Arial'>{_html.escape(str(e))}</p>", 500
+
+
+@bp.get("/debug-reactivate-customer")
+def debug_reactivate_customer():
+    """
+    DIAGNOSTIC ONLY, not used by any live FM script or production path.
+    Built 2026-08-12 to answer one specific question empirically: does
+    CustomerMod's IsActive=true also resolve QB's "deleted" state (distinct
+    from plain inactive -- confirmed by Bill, 2026-08-12: QB Desktop shows a
+    red-X marker and a separate "would you like to undelete it?" prompt for
+    deleted customers), or does it only reactivate plain-inactive ones?
+
+    Query params:
+        list_id — QB ListID to test against (e.g. a customer currently
+                  showing the red-X "deleted" marker in QB Desktop)
+        api_key — shared API key (query string since GET can't send custom headers)
+    """
+    if request.args.get("api_key", "") != API_KEY:
+        return "<h1>Unauthorized</h1>", 401
+
+    list_id = request.args.get("list_id", "").strip()
+    if not list_id:
+        return jsonify({"status": "error", "error": "list_id is required"}), 400
+
+    try:
+        result = com.diagnostic_reactivate_customer(list_id)
+        return jsonify(result)
+    except RuntimeError as e:
+        return jsonify({"status": "error", "error": str(e)}), 422
+    except Exception as e:
+        return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
 
 
 @bp.get("/debug-query-raw")

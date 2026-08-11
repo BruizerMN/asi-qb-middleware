@@ -21,7 +21,7 @@ from .qbxml_builder import (
     build_company_query,
     build_customer_query, build_customer_query_by_list_id,
     build_customer_name_filter_query, build_customer_add_job,
-    build_customer_add, build_customer_mod,
+    build_customer_add, build_customer_mod, build_customer_reactivate,
     build_customer_list_query, build_item_list_query,
     build_item_query_by_name, build_terms_query, build_ship_method_query,
     build_sales_rep_query, build_invoice_query, build_sales_order_query, ITEM_QUERY_TYPES,
@@ -943,6 +943,64 @@ def lookup_customer_by_list_id(list_id: str) -> dict:
             "is_active": cust.findtext("IsActive") or "",
             "raw_status_code": status_code,
             "raw_status_message": status_msg,
+        }
+    finally:
+        _close_session(rp, ticket)
+
+
+def diagnostic_reactivate_customer(list_id: str) -> dict:
+    """
+    DIAGNOSTIC ONLY (2026-08-12), not wired into any production create/update
+    path. Queries a customer by ListID, reports its current state, attempts
+    CustomerMod with IsActive=true, and reports the result -- built to answer
+    one specific open question empirically: does IsActive=true also resolve
+    QB's separate "deleted" state (distinct from plain inactive -- confirmed
+    by Bill, 2026-08-12: QB Desktop shows a red-X marker and a distinct
+    "would you like to undelete it?" prompt for deleted customers), or does
+    it only reactivate plain-inactive ones? See build_customer_reactivate()
+    and the /fm/debug-reactivate-customer route.
+
+    Returns {"found": False} if the ListID doesn't resolve to anything at
+    all, otherwise {"found": True, "before": {...}, "mod_status_code": "...",
+    "mod_status_message": "...", "after": {...} or None, "raw_mod_response": "..."}.
+    """
+    rp, ticket = _open_session()
+    try:
+        before_resp = rp.ProcessRequest(ticket, build_customer_query_by_list_id(list_id))
+        before_root = ET.fromstring(before_resp)
+        before_cust = before_root.find(".//CustomerRet")
+        if before_cust is None:
+            return {"found": False, "list_id": list_id}
+
+        edit_sequence = before_cust.findtext("EditSequence") or ""
+        before_state = {
+            "full_name": before_cust.findtext("FullName") or "",
+            "account_number": before_cust.findtext("AccountNumber") or "",
+            "is_active": before_cust.findtext("IsActive") or "",
+        }
+
+        mod_resp = rp.ProcessRequest(ticket, build_customer_reactivate(list_id, edit_sequence))
+        mod_root = ET.fromstring(mod_resp)
+        rs = mod_root.find(".//CustomerModRs")
+        status_code = rs.get("statusCode", "?") if rs is not None else "?"
+        status_msg  = rs.get("statusMessage", "") if rs is not None else ""
+
+        after_cust = mod_root.find(".//CustomerRet")
+        after_state = None
+        if after_cust is not None:
+            after_state = {
+                "full_name": after_cust.findtext("FullName") or "",
+                "account_number": after_cust.findtext("AccountNumber") or "",
+                "is_active": after_cust.findtext("IsActive") or "",
+            }
+
+        return {
+            "found": True,
+            "before": before_state,
+            "mod_status_code": status_code,
+            "mod_status_message": status_msg,
+            "after": after_state,
+            "raw_mod_response": mod_resp,
         }
     finally:
         _close_session(rp, ticket)
