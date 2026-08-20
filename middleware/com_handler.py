@@ -40,6 +40,16 @@ _LIST_CONFLICT_CODES = ("3180", "3170")
 _LIST_CONFLICT_MAX_ATTEMPTS = 3
 _LIST_CONFLICT_RETRY_DELAY = 1.5  # seconds
 
+# 3200 -- "The provided edit sequence ... is out-of-date." Distinct from the
+# transient list-lock codes above: the record was genuinely modified in QB
+# since we fetched our EditSequence, so resending the same request fails
+# again. Requires re-querying for a fresh EditSequence before retrying, not
+# just a blind resend. See create_or_update_customer()'s CustomerMod retry
+# loop, root-caused 2026-08-13 (Nicole Kalkes, ASI-113804 area) after the
+# morning's "customer not found in FileMaker" incident produced several
+# rapid repeat CustomerMod calls against the same customers.
+_STALE_EDIT_SEQUENCE_CODE = "3200"
+
 # Recognized QB rejection message substrings (case-insensitive) -> a
 # friendlier, actionable message to show instead of QuickBooks' raw nested
 # error text. Matched on the MESSAGE, not the status code -- QB reuses the
@@ -81,23 +91,43 @@ _CACHE_TTL = 1800  # 30 minutes
 _customer_cache: dict = {}
 
 
-def _customer_cache_populate(slug: str, customers: list) -> None:
-    """Store a customer list in the cache, indexed by lower-cased account_number."""
+def _customer_cache_populate(slug: str, customers: list, complete: bool) -> None:
+    """
+    Store a customer list in the cache, indexed by lower-cased account_number.
+
+    complete=True means this list came from an ActiveStatus="All" fetch (every
+    customer, active or inactive) -- safe for any caller that needs to
+    distinguish "genuinely never in QB" from "exists but inactive" (e.g.
+    create_or_update_customer's reactivate-on-touch logic). complete=False
+    means ActiveOnly (the bulk/get_all_customers query) -- a "not found" from
+    this list only means "not found among active customers", NOT "never
+    existed in QB", so callers that need the stronger guarantee should not
+    trust a hit against an incomplete entry (see require_complete below).
+    """
     _customer_cache[slug] = {
         "customers":  customers,
         "by_account": {c["account_number"].strip().lower(): c for c in customers},
         "ts":         time.time(),
+        "complete":   complete,
     }
 
 
-def _customer_cache_lookup(slug: str, account_number: str) -> tuple:
+def _customer_cache_lookup(slug: str, account_number: str, require_complete: bool = False) -> tuple:
     """
     Return (hit, customer_or_None).
-    hit=True  — cache was valid; customer_or_None is the result (may be None = not found).
-    hit=False — cache stale/missing; caller should fetch from QB.
+    hit=True  — cache was valid (and, if require_complete, was an ActiveStatus="All"
+                fetch); customer_or_None is the result (may be None = not found).
+    hit=False — cache stale/missing/not-complete-enough; caller should fetch from QB.
+
+    require_complete=True: only accept a hit from a cache entry populated via
+    an ActiveStatus="All" fetch (see _customer_cache_populate) -- pass this
+    when "no match" must mean "does not exist in QB at all" and not merely
+    "not currently active", e.g. before deciding whether to CustomerAdd.
     """
     entry = _customer_cache.get(slug)
     if entry and (time.time() - entry["ts"]) < _CACHE_TTL:
+        if require_complete and not entry.get("complete", False):
+            return False, None
         return True, entry["by_account"].get(account_number.strip().lower())
     return False, None
 
@@ -570,7 +600,10 @@ def get_all_customers(expected_slug: str) -> list:
             })
 
         # Warm the cache so subsequent individual lookups skip the QB fetch.
-        _customer_cache_populate(expected_slug, customers)
+        # complete=False: this is an ActiveOnly fetch, so a miss here only
+        # means "not active", not "never existed in QB" -- see
+        # _customer_cache_populate's docstring.
+        _customer_cache_populate(expected_slug, customers, complete=False)
         return customers
 
     finally:
@@ -663,7 +696,10 @@ def get_customer_by_account(account_number: str, bypass_cache: bool = False) -> 
                 result = c
 
         if slug:
-            _customer_cache_populate(slug, customers)
+            # complete=True: this fetch used ActiveStatus="All", so it covers
+            # every customer/job -- a miss here safely means "never existed in
+            # QB", not just "not active". See _customer_cache_populate's docstring.
+            _customer_cache_populate(slug, customers, complete=True)
 
         return result
 
@@ -793,22 +829,55 @@ def create_or_update_customer(account_number: str, fields: dict, existing_list_i
         # already have. This is the common case once a customer has synced
         # once -- only a genuinely new-to-FM customer (no existing_list_id) or
         # a stale link (cleared above) still needs the full scan.
+        #
+        # 2026-08-20 perf fix: for that remaining case (genuinely first sync),
+        # check the shared customer cache before paying for the full scan --
+        # require_complete=True means we only trust a hit that came from an
+        # ActiveStatus="All" fetch (see _customer_cache_populate), so this is
+        # exactly as reliable as a live fetch here, just free when warm. This
+        # is the path Cat/Bill's ~1-3min "customer sync" complaints traced to
+        # (2026-08-20): the 08-11 fix only sped up re-syncing an
+        # already-linked customer, never this first-time-creation path.
+        # `root` stays None on a cache hit -- nothing was fetched, so the
+        # 3100-duplicate-name handler below falls back to a live fetch only
+        # in that rare case.
+        root = None
         if existing_list_id and stale_link is None:
             trace.append(f"ListID pre-check already confirmed a valid link -- skipping full customer-list fetch, reusing ListID={existing_list_id!r}")
             existing = val_cust
         else:
-            trace.append("fetching full customer list (ActiveStatus=All) for AccountNumber scan")
-            response = rp.ProcessRequest(ticket, build_customer_list_query("All"))
-            root = ET.fromstring(response)
-            target = safe_account.strip().lower()
-            existing = None
-            for cust in root.findall(".//CustomerRet"):
-                if cust.find("ParentRef") is not None:
-                    continue
-                acct = cust.findtext("AccountNumber") or ""
-                if acct.strip().lower() == target:
-                    existing = cust
-                    break
+            cache_hit, cached_customer = (
+                _customer_cache_lookup(slug, safe_account, require_complete=True) if slug else (False, None)
+            )
+            if cache_hit and cached_customer is not None:
+                trace.append(f"customer cache hit (ListID={cached_customer['list_id']!r}) -- skipping full fetch, re-querying just this record for a current EditSequence")
+                fresh_resp = rp.ProcessRequest(ticket, build_customer_query_by_list_id(cached_customer["list_id"]))
+                fresh_root = ET.fromstring(fresh_resp)
+                existing = fresh_root.find(".//CustomerRet")
+            elif cache_hit:
+                trace.append("customer cache hit -- no match, skipping full fetch, proceeding to CustomerAdd")
+                existing = None
+            else:
+                trace.append("customer cache miss/stale -- fetching full customer list (ActiveStatus=All) for AccountNumber scan")
+                response = rp.ProcessRequest(ticket, build_customer_list_query("All"))
+                root = ET.fromstring(response)
+                target = safe_account.strip().lower()
+                existing = None
+                fetched_customers = []
+                for cust in root.findall(".//CustomerRet"):
+                    if cust.find("ParentRef") is not None:
+                        continue
+                    acct = cust.findtext("AccountNumber") or ""
+                    if acct.strip().lower() == target:
+                        existing = cust
+                    if acct:
+                        fetched_customers.append({
+                            "list_id":        cust.findtext("ListID") or "",
+                            "full_name":      _ascii_safe(cust.findtext("FullName") or ""),
+                            "account_number": acct,
+                        })
+                if slug:
+                    _customer_cache_populate(slug, fetched_customers, complete=True)
 
         if existing is not None:
             list_id = existing.findtext("ListID") or ""
@@ -830,6 +899,25 @@ def create_or_update_customer(account_number: str, fields: dict, existing_list_i
                     break
                 if code in _LIST_CONFLICT_CODES and attempt < _LIST_CONFLICT_MAX_ATTEMPTS:
                     trace.append(f"CustomerMod hit transient list-lock conflict (code={code}), retrying (attempt {attempt}/{_LIST_CONFLICT_MAX_ATTEMPTS})")
+                    time.sleep(_LIST_CONFLICT_RETRY_DELAY)
+                    continue
+                if code == _STALE_EDIT_SEQUENCE_CODE and attempt < _LIST_CONFLICT_MAX_ATTEMPTS:
+                    # Unlike 3180/3170, a stale EditSequence (someone/something
+                    # else modified this record after we fetched ours) can't be
+                    # fixed by resending the same request -- QB will reject the
+                    # same edit_sequence again. Re-query the record for its
+                    # current EditSequence and rebuild the Mod before retrying.
+                    trace.append(f"CustomerMod hit stale edit sequence (code={code}), re-querying ListID={list_id!r} for current EditSequence, retrying (attempt {attempt}/{_LIST_CONFLICT_MAX_ATTEMPTS})")
+                    refresh_resp = rp.ProcessRequest(ticket, build_customer_query_by_list_id(list_id))
+                    refresh_root = ET.fromstring(refresh_resp)
+                    refresh_cust = refresh_root.find(".//CustomerRet")
+                    edit_sequence = (refresh_cust.findtext("EditSequence") or "") if refresh_cust is not None else edit_sequence
+                    mod_xml = build_customer_mod({
+                        **fields,
+                        "list_id": list_id,
+                        "edit_sequence": edit_sequence,
+                        "account_number": account_number,
+                    })
                     time.sleep(_LIST_CONFLICT_RETRY_DELAY)
                     continue
                 break
@@ -918,7 +1006,15 @@ def create_or_update_customer(account_number: str, fields: dict, existing_list_i
             # (confirmed true for Bill's own login), which would undermine an
             # automated search anyway. QB's own statusMessage is included
             # below instead -- cheap, and often already says something useful.
-            trace.append("CustomerAdd FAILED: code=3100 (duplicate name) -- searching already-fetched customer/job list for the conflict")
+            if root is None:
+                # 2026-08-20 perf fix took the cache-hit path above, so no
+                # full fetch has happened yet this call -- only pay for one
+                # now, in this rare conflict case where it's actually needed.
+                trace.append("CustomerAdd FAILED: code=3100 (duplicate name) -- no full fetch on hand (cache-hit path), fetching now to find the conflict")
+                conflict_resp = rp.ProcessRequest(ticket, build_customer_list_query("All"))
+                root = ET.fromstring(conflict_resp)
+            else:
+                trace.append("CustomerAdd FAILED: code=3100 (duplicate name) -- searching already-fetched customer/job list for the conflict")
             conflict = None
             for cust in root.findall(".//CustomerRet"):
                 if _ascii_safe(cust.findtext("Name") or "").lower() == safe_name.lower():
