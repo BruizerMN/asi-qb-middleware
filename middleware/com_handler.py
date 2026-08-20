@@ -707,6 +707,56 @@ def get_customer_by_account(account_number: str, bypass_cache: bool = False) -> 
         _close_session(rp, ticket)
 
 
+def warm_customer_cache() -> dict:
+    """
+    Dev tool (Bill, 2026-08-20): force-refresh the customer-list cache for
+    whichever QB company is currently open, with no other side effects --
+    doesn't read, create, or modify any specific customer record. Exists so
+    a tech can manually warm the cache from FM (e.g. to set up a clean speed
+    test of create_or_update_customer's cache-hit path, without spending a
+    real first-time customer sync just to warm it).
+
+    Always does a live ActiveStatus="All" fetch -- never reads the existing
+    cache -- and populates it complete=True, the same shape
+    create_or_update_customer's cache-hit check trusts.
+
+    Returns {"slug": "...", "company_name": "...", "count": N}.
+    Raises RuntimeError if QB isn't open or the open file isn't a
+    recognized ASI company (same as the rest of this module).
+    """
+    rp, ticket = _open_session()
+    try:
+        info = _get_company_info(rp, ticket)
+        slug = _detect_slug(info["name"])
+        if not slug:
+            raise RuntimeError(
+                f"QB company '{info['name']}' is open but not a recognized ASI company file."
+            )
+
+        response = rp.ProcessRequest(ticket, build_customer_list_query("All"))
+        root = ET.fromstring(response)
+
+        customers = []
+        for cust in root.findall(".//CustomerRet"):
+            if cust.find("ParentRef") is not None:
+                continue
+            account_number = cust.findtext("AccountNumber") or ""
+            if not account_number:
+                continue
+            customers.append({
+                "list_id":        cust.findtext("ListID") or "",
+                "full_name":      _ascii_safe(cust.findtext("FullName") or ""),
+                "account_number": account_number,
+            })
+
+        _customer_cache_populate(slug, customers, complete=True)
+
+        return {"slug": slug, "company_name": info["name"], "count": len(customers)}
+
+    finally:
+        _close_session(rp, ticket)
+
+
 def create_or_update_customer(account_number: str, fields: dict, existing_list_id: str = "") -> dict:
     """
     "UpdateCreate" entry point for a single top-level QB customer -- unlike

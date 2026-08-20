@@ -11,6 +11,7 @@ Endpoints:
     POST /fm/sync-customers — return all active QB customers for FM to match and store
     POST /fm/sync-items     — return all active QB items for FM to match and store
     POST /fm/sync-customer  — sync a single customer by AccountNumber
+    POST /fm/warm-customer-cache — refresh the customer-list cache for the open company, no other side effects (dev only)
     POST /fm/customer-updatecreate — create or update a single customer by AccountNumber
     POST /fm/sync-item      — sync a single item by Name (= FM productID)
     POST /fm/debug-invoice  — return generated qbXML without submitting (dev only)
@@ -371,6 +372,42 @@ def sync_customer():
         return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
     finally:
         logger.log_event("sync_customer", **_log)
+
+
+@bp.post("/warm-customer-cache")
+@require_api_key
+def warm_customer_cache():
+    """
+    Dev tool (dev only): force-refresh the customer-list cache for whichever
+    QB company is currently open. Read-only against QB -- creates, updates,
+    or deletes nothing. Exists so a tech can manually reset the cache from FM
+    (e.g. before timing a customer-creation test) without needing to touch a
+    real customer record just to warm it.
+
+    No required fields.
+
+    Returns:
+        {"status": "ok", "company": "acoustical", "company_name": "...", "count": N}
+        {"status": "error", "error": "..."}
+    """
+    _log = {"status": "error"}
+    try:
+        result = com.warm_customer_cache()
+        _log.update({"status": "ok", "company": result["slug"], "count": result["count"]})
+        return jsonify({
+            "status":       "ok",
+            "company":      result["slug"],
+            "company_name": result["company_name"],
+            "count":        result["count"],
+        })
+    except RuntimeError as e:
+        _log["error"] = str(e)
+        return jsonify({"status": "error", "error": str(e)}), 422
+    except Exception as e:
+        _log["error"] = f"Unexpected error: {e}"
+        return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+    finally:
+        logger.log_event("warm_customer_cache", **_log)
 
 
 @bp.post("/customer-updatecreate")
