@@ -7,6 +7,7 @@ FileMaker uses Insert from URL to call these. All requests must include:
 Endpoints:
     POST /fm/invoice        — submit an invoice to QuickBooks (synchronous via COM)
     POST /fm/sales-order    — submit a sales order to QuickBooks (synchronous via COM)
+    POST /fm/delete-transaction — permanently delete a Sales Order/Invoice by RefNumber (dev/reset tool)
     POST /fm/ping           — verify QB is running and check which company is open
     POST /fm/sync-customers — return all active QB customers for FM to match and store
     POST /fm/sync-items     — return all active QB items for FM to match and store
@@ -253,6 +254,65 @@ def post_sales_order():
         return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
     finally:
         logger.log_event("sales_order_post", **_log)
+
+
+@bp.post("/delete-transaction")
+@require_api_key
+def delete_transaction():
+    """
+    Permanently delete a Sales Order or Invoice from QuickBooks by RefNumber
+    (Bill's design, 2026-08-20 -- a discrete "full reset" tool, separate
+    from the existing FM unlink tool). Auto-detects SalesOrder vs Invoice --
+    caller doesn't need to know which type it is.
+
+    Refuses to delete a transaction that has any linked transaction (most
+    commonly a Sales Order already converted to an Invoice) -- QuickBooks
+    would likely block this anyway, but with a much less actionable error.
+
+    Irreversible once it succeeds. FM is responsible for confirming with the
+    user before calling this.
+
+    Required field:
+        ref_number — the ASI order number as stored in QB_InvoiceID (e.g. "ASI-113889")
+
+    Optional field:
+        company — "acoustical" or "architectural". If omitted, auto-detected from
+                  the open QB company file.
+
+    Returns:
+        {"status": "ok", "action": "deleted", "txn_type": "SalesOrder", "ref_number": "...", "txn_id": "..."}
+        {"status": "ok", "action": "not_found", "ref_number": "..."}
+        {"status": "blocked", "action": "blocked_linked_txns", "txn_type": "...", "ref_number": "...",
+         "linked": [{"txn_type": "...", "ref_number": "..."}, ...]}
+        {"status": "error", "error": "..."}
+    """
+    data       = request.get_json(force=True, silent=True) or {}
+    ref_number = data.get("ref_number", "").strip()
+    company    = data.get("company", "").lower()
+    if not ref_number:
+        return jsonify({"status": "error", "error": "ref_number is required"}), 400
+
+    _log = {"ref_number": ref_number, "company": company or "auto-detect", "status": "error"}
+
+    try:
+        if company not in ("acoustical", "architectural"):
+            company = com.detect_open_slug()
+        _log["company"] = company
+
+        result = com.delete_transaction(ref_number, company)
+        _log.update({"status": result["action"], **result})
+
+        if result["action"] == "blocked_linked_txns":
+            return jsonify({"status": "blocked", **result})
+        return jsonify({"status": "ok", **result})
+    except RuntimeError as e:
+        _log["error"] = str(e)
+        return jsonify({"status": "error", "error": str(e)}), 422
+    except Exception as e:
+        _log["error"] = f"Unexpected error: {e}"
+        return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
+    finally:
+        logger.log_event("delete_transaction", **_log)
 
 
 @bp.post("/sync-customers")

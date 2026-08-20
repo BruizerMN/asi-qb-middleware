@@ -703,25 +703,68 @@ def build_item_query_by_name(item_name: str) -> str:
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 
-def build_invoice_query(ref_number: str) -> str:
-    """Return an InvoiceQueryRq by RefNumber (QB invoice number)."""
+def build_invoice_query(ref_number: str, include_linked_txns: bool = False) -> str:
+    """Return an InvoiceQueryRq by RefNumber (QB invoice number).
+
+    include_linked_txns=True (2026-08-20, for delete_transaction's
+    pre-delete safety check): asks QB to include each LinkedTxn (e.g. a
+    Payment applied against this Invoice) in the response, so a caller can
+    detect and refuse to delete a transaction that has dependents QB itself
+    would otherwise block on with a less friendly error. Defaults False --
+    existing callers (view/lookup paths) don't need this extra data."""
     root = ET.Element("QBXML")
     msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
     req = ET.SubElement(msgs, "InvoiceQueryRq", requestID="1")
     _text(req, "RefNumber", ref_number)
     _text(req, "IncludeLineItems", "true")
+    if include_linked_txns:
+        _text(req, "IncludeLinkedTxns", "true")
     _text(req, "OwnerID", "0")
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 
-def build_sales_order_query(ref_number: str) -> str:
-    """Return a SalesOrderQueryRq by RefNumber (QB sales order number)."""
+def build_sales_order_query(ref_number: str, include_linked_txns: bool = False) -> str:
+    """Return a SalesOrderQueryRq by RefNumber (QB sales order number).
+
+    include_linked_txns=True (2026-08-20, for delete_transaction's pre-delete
+    safety check): asks QB to include each LinkedTxn (e.g. an Invoice
+    generated from this Sales Order via Cat's team's manual SO->Invoice
+    conversion) in the response -- QB will refuse to delete a Sales Order
+    that still has a linked Invoice, so this lets the caller detect that and
+    give the user a clear, specific message instead of a raw QB rejection.
+    Defaults False -- existing callers (view/lookup/Promise-Date paths)
+    don't need this extra data.
+
+    NOT YET LIVE-TESTED against a real linked SO/Invoice pair as of
+    2026-08-20 -- verify the LinkedTxn element actually appears in the
+    response, and in the expected position in the request, before relying
+    on it in production."""
     root = ET.Element("QBXML")
     msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
     req = ET.SubElement(msgs, "SalesOrderQueryRq", requestID="1")
     _text(req, "RefNumber", ref_number)
     _text(req, "IncludeLineItems", "true")
+    if include_linked_txns:
+        _text(req, "IncludeLinkedTxns", "true")
     _text(req, "OwnerID", "0")
+    return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
+
+
+def build_txn_del(txn_type: str, txn_id: str) -> str:
+    """Return a TxnDelRq to permanently delete an existing transaction.
+
+    txn_type must be a valid qbXML TxnDelType value -- "SalesOrder" or
+    "Invoice" for this project's purposes (the full QB SDK list is much
+    longer, but those are the only two ASI's integration creates).
+
+    Irreversible in QuickBooks once it succeeds. Callers are responsible for
+    any pre-delete safety checks (e.g. refusing to delete a transaction with
+    linked dependents) -- this function only builds the request."""
+    root = ET.Element("QBXML")
+    msgs = ET.SubElement(root, "QBXMLMsgsRq", onError="stopOnError")
+    req = ET.SubElement(msgs, "TxnDelRq", requestID="1")
+    _text(req, "TxnDelType", txn_type)
+    _text(req, "TxnID", txn_id)
     return _wrap_qbxml(ET.tostring(root, encoding="unicode"))
 
 

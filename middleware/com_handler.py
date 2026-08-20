@@ -25,7 +25,7 @@ from .qbxml_builder import (
     build_customer_list_query, build_item_list_query,
     build_item_query_by_name, build_terms_query, build_ship_method_query,
     build_sales_rep_query, build_invoice_query, build_sales_order_query, ITEM_QUERY_TYPES,
-    build_item_sales_tax_list_query, build_data_ext_add,
+    build_item_sales_tax_list_query, build_data_ext_add, build_txn_del,
 )
 
 APP_NAME = "ASI QB Middleware"
@@ -558,6 +558,119 @@ def submit_sales_order(qbxml: str, expected_slug: str, ship_date: str = "") -> t
             warning = _set_promise_date(rp, ticket, txn_id, "SalesOrder", ship_date)
 
         return so_number, warning
+
+    finally:
+        _close_session(rp, ticket)
+
+
+def delete_transaction(ref_number: str, expected_slug: str) -> dict:
+    """
+    Permanently delete a Sales Order or Invoice from QuickBooks, identified
+    by RefNumber (ASI's own order number, e.g. "ASI-113889") -- the same
+    value stored in FM's QB_InvoiceID field regardless of which submission
+    path (QB_SubmitSalesOrder or QB_SubmitInvoice) created it.
+
+    Bill's design, 2026-08-20: a discrete reset tool, separate from the
+    existing "unlink" FM tool (which handles the opposite case -- a user
+    manually deleted the transaction IN QuickBooks and FM needs to catch
+    up). This is for FM-initiated deletion: an order needs material changes
+    after already being posted, and the simplest path is delete the QB
+    side, clear FM's QB_SaleImported_01/QB_InvoiceID, resubmit clean.
+
+    Auto-detects transaction type -- tries SalesOrder first (ASI's primary
+    path today), falls back to Invoice if not found as a Sales Order.
+    Querying by RefNumber for the wrong type just comes back empty, which
+    is cheap, so the caller doesn't need to know or pass which type it is.
+
+    Safety check (Bill's requirement, 2026-08-20): refuses to delete a
+    transaction that has ANY LinkedTxn -- most commonly a Sales Order
+    already converted to an Invoice by Cat's team, or an Invoice with a
+    Payment applied. QuickBooks itself would likely block the delete
+    anyway, but with a far less actionable raw error; this catches it first
+    and reports exactly which linked transaction(s) need to be removed in
+    QB before retrying. Returns action="blocked_linked_txns" rather than
+    raising, since this is an expected/routine outcome, not a failure.
+
+    Irreversible once it succeeds -- there is no undo in QuickBooks for a
+    deleted transaction. Callers must confirm with the user before calling
+    this.
+
+    NOT YET LIVE-TESTED as of 2026-08-20 -- in particular, confirm the
+    LinkedTxn detection actually works against a real SO-converted-to-
+    Invoice pair before trusting it as a safety net in production.
+
+    Returns one of:
+      {"action": "deleted", "txn_type": "SalesOrder"|"Invoice",
+       "ref_number": "...", "txn_id": "..."}
+      {"action": "not_found", "ref_number": "..."}
+      {"action": "blocked_linked_txns", "txn_type": "...", "ref_number": "...",
+       "linked": [{"txn_type": "...", "ref_number": "..."}, ...]}
+    Raises RuntimeError on any other QB rejection or connection failure --
+    the failure is appended to the exception message so it isn't lost.
+    """
+    rp, ticket = _open_session()
+    try:
+        info = _get_company_info(rp, ticket)
+        verify_company(info, expected_slug)
+
+        # Try SalesOrder first (ASI's primary path today), then Invoice.
+        txn_type = None
+        ret = None
+        for candidate_type, query_fn, ret_name in (
+            ("SalesOrder", build_sales_order_query, "SalesOrderRet"),
+            ("Invoice",    build_invoice_query,      "InvoiceRet"),
+        ):
+            response = rp.ProcessRequest(ticket, query_fn(ref_number, include_linked_txns=True))
+            root = ET.fromstring(response)
+            found = root.find(f".//{ret_name}")
+            if found is not None:
+                txn_type = candidate_type
+                ret = found
+                break
+
+        if ret is None:
+            return {"action": "not_found", "ref_number": ref_number}
+
+        txn_id = ret.findtext("TxnID") or ""
+        if not txn_id:
+            raise RuntimeError(
+                f"Found the {txn_type} for RefNumber {ref_number!r} in QuickBooks but its "
+                f"response had no TxnID -- cannot delete without one."
+            )
+
+        linked = [
+            {
+                "txn_type":   lt.findtext("TxnType") or "",
+                "ref_number": lt.findtext("RefNumber") or "",
+            }
+            for lt in ret.findall("LinkedTxn")
+        ]
+        if linked:
+            return {
+                "action":     "blocked_linked_txns",
+                "txn_type":   txn_type,
+                "ref_number": ref_number,
+                "linked":     linked,
+            }
+
+        del_resp = rp.ProcessRequest(ticket, build_txn_del(txn_type, txn_id))
+        del_root = ET.fromstring(del_resp)
+        rs = del_root.find(".//TxnDelRs")
+        status_code = rs.get("statusCode", "") if rs is not None else ""
+        status_msg  = rs.get("statusMessage", "") if rs is not None else ""
+
+        if status_code != "0":
+            raise RuntimeError(
+                f"QuickBooks rejected deleting the {txn_type} (RefNumber {ref_number}): "
+                f"{_friendly_qb_message(status_msg)} (code {status_code})"
+            )
+
+        return {
+            "action":     "deleted",
+            "txn_type":   txn_type,
+            "ref_number": ref_number,
+            "txn_id":     txn_id,
+        }
 
     finally:
         _close_session(rp, ticket)
